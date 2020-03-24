@@ -19,17 +19,22 @@
 # LDFLAGS	linker flags for linking all binaries
 # ERL_LDFLAGS	additional linker flags for projects referencing Erlang libraries
 # MIX_APP_PATH  path to the build directory
+include src/config.mk
+
+MOSQUITTOD_SRC=src/mosquitto/src
+DIRS=${MOSQUITTOD_SRC}
 
 PREFIX = $(MIX_APP_PATH)/priv
 BUILD  = $(MIX_APP_PATH)/obj
 
 CFLAGS ?= -O2 -Wall -Wextra -Wno-unused-parameter
-CFLAGS += -std=c99 -D_GNU_SOURCE
+CFLAGS += -std=c99 -D_GNU_SOURCE -fPIC
+
+CPPFLAGS += -fPIC
 
 ###################
-# If you're having trouble with the serial port, commenting in the following line
-# may give some more hints. By default, log messages are appended to circuits_uart.log.
-# See src/circuits_uart.c to change this. Be sure to rebuild everything by invoking
+# If you're having trouble, commenting in the following line
+# may give some more hints.  Be sure to rebuild everything by invoking
 # "mix clean" and then "mix compile", so that the flag takes effect.
 #CFLAGS += -DDEBUG
 
@@ -57,7 +62,7 @@ ERL_CFLAGS = -I"$(CURDIR)/src/ei_copy"
 SRC += $(wildcard src/ei_copy/*.c)
 CFLAGS += -DUNICODE
 
-EXEEXT=.exe
+LIBEXT=.dll
 
 RM=del
 
@@ -70,6 +75,8 @@ UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Linux)
   LDFLAGS += -lrt
 endif
+
+LIBEXT=.so
 
 # The paths to the EI library and header files are either passed in when
 # compiled by Nerves (crosscompiled builds) or determined by mix.exs for
@@ -94,34 +101,114 @@ endif
 
 endif
 
+
+MOSQUITTOD_OBJS=	\
+		${MOSQUITTOD_SRC}/mosquitto.o \
+		${MOSQUITTOD_SRC}/alias_mosq.o \
+		${MOSQUITTOD_SRC}/bridge.o \
+		${MOSQUITTOD_SRC}/conf.o \
+		${MOSQUITTOD_SRC}/conf_includedir.o \
+		${MOSQUITTOD_SRC}/context.o \
+		${MOSQUITTOD_SRC}/database.o \
+		${MOSQUITTOD_SRC}/handle_auth.o \
+		${MOSQUITTOD_SRC}/handle_connack.o \
+		${MOSQUITTOD_SRC}/handle_connect.o \
+		${MOSQUITTOD_SRC}/handle_disconnect.o \
+		${MOSQUITTOD_SRC}/handle_ping.o \
+		${MOSQUITTOD_SRC}/handle_pubackcomp.o \
+		${MOSQUITTOD_SRC}/handle_publish.o \
+		${MOSQUITTOD_SRC}/handle_pubrec.o \
+		${MOSQUITTOD_SRC}/handle_pubrel.o \
+		${MOSQUITTOD_SRC}/handle_suback.o \
+		${MOSQUITTOD_SRC}/handle_subscribe.o \
+		${MOSQUITTOD_SRC}/handle_unsuback.o \
+		${MOSQUITTOD_SRC}/handle_unsubscribe.o \
+		${MOSQUITTOD_SRC}/logging.o \
+		${MOSQUITTOD_SRC}/loop.o \
+		${MOSQUITTOD_SRC}/memory_mosq.o \
+		${MOSQUITTOD_SRC}/misc_mosq.o \
+		${MOSQUITTOD_SRC}/net.o \
+		${MOSQUITTOD_SRC}/net_mosq.o \
+		${MOSQUITTOD_SRC}/net_mosq_ocsp.o \
+		${MOSQUITTOD_SRC}/packet_datatypes.o \
+		${MOSQUITTOD_SRC}/packet_mosq.o \
+		${MOSQUITTOD_SRC}/property_broker.o \
+		${MOSQUITTOD_SRC}/property_mosq.o \
+		${MOSQUITTOD_SRC}/persist_read.o \
+		${MOSQUITTOD_SRC}/persist_read_v234.o \
+		${MOSQUITTOD_SRC}/persist_read_v5.o \
+		${MOSQUITTOD_SRC}/persist_write.o \
+		${MOSQUITTOD_SRC}/persist_write_v5.o \
+		${MOSQUITTOD_SRC}/plugin.o \
+		${MOSQUITTOD_SRC}/read_handle.o \
+		${MOSQUITTOD_SRC}/security.o \
+		${MOSQUITTOD_SRC}/security_default.o \
+		${MOSQUITTOD_SRC}/send_auth.o \
+		${MOSQUITTOD_SRC}/send_connack.o \
+		${MOSQUITTOD_SRC}/send_connect.o \
+		${MOSQUITTOD_SRC}/send_disconnect.o \
+		${MOSQUITTOD_SRC}/send_mosq.o \
+		${MOSQUITTOD_SRC}/send_publish.o \
+		${MOSQUITTOD_SRC}/send_suback.o \
+		${MOSQUITTOD_SRC}/send_subscribe.o \
+		${MOSQUITTOD_SRC}/send_unsuback.o \
+		${MOSQUITTOD_SRC}/send_unsubscribe.o \
+		${MOSQUITTOD_SRC}/service.o \
+		${MOSQUITTOD_SRC}/session_expiry.o \
+		${MOSQUITTOD_SRC}/signals.o \
+		${MOSQUITTOD_SRC}/subs.o \
+		${MOSQUITTOD_SRC}/sys_tree.o \
+		${MOSQUITTOD_SRC}/time_mosq.o \
+		${MOSQUITTOD_SRC}/tls_mosq.o \
+		${MOSQUITTOD_SRC}/utf8_mosq.o \
+		${MOSQUITTOD_SRC}/util_mosq.o \
+		${MOSQUITTOD_SRC}/util_topic.o \
+		${MOSQUITTOD_SRC}/websockets.o \
+		${MOSQUITTOD_SRC}/will_delay.o \
+		${MOSQUITTOD_SRC}/will_mosq.o
+
 HEADERS =$(wildcard src/*.h)
 OBJ=$(SRC:src/%.c=$(BUILD)/%.o)
-PORTEXE=$(PREFIX)/circuits_uart$(EXEEXT)
+PORTLIB=$(PREFIX)/mosquitto_embed$(LIBEXT)
 
 all: install
 
-install: $(PREFIX) $(BUILD) $(BUILD)/ei_copy $(PORTEXE)
+install: $(PREFIX) $(BUILD) mosquitto $(PORTLIB)
 
 $(OBJ): $(HEADERS) src/Makefile
 
 $(BUILD)/%.o: src/%.c
 	$(CC) -c $(ERL_CFLAGS) $(CFLAGS) -o $@ $<
 
-$(PORTEXE): $(OBJ)
-	$(CC) $^ $(ERL_LDFLAGS) $(LDFLAGS) -o $@
+# ${CROSS_COMPILE}$(CC) -shared $(LIB_LDFLAGS) $^ -o $@ ${LIB_LIBADD}
+$(PORTLIB): $(OBJ) $(MOSQUITTOD_OBJS)
+	$(CC) -fpic -shared $^ $(ERL_LDFLAGS) $(LDFLAGS) ${BROKER_LDFLAGS} -o $@ $(BROKER_LDADD)
 
 ifeq ($(OS),Windows_NT)
 $(PREFIX) $(BUILD) $(BUILD)/ei_copy:
 	mkdir $(subst /,\\,$@)
 
 clean:
-	-$(RM) $(subst /,\,$(PORTEXE) $(OBJ))
+	-$(RM) $(subst /,\,$(PORTLIB) $(OBJ))
 else
 $(PREFIX) $(BUILD) $(BUILD)/ei_copy:
 	mkdir -p $@
 
 clean:
-	$(RM) $(PORTEXE) $(OBJ)
+	set -e; for d in ${DIRS}; do $(MAKE) -C $${d} clean; done
+	$(RM) $(PORTLIB) $(OBJ)
 endif
 
-.PHONY: all clean install
+reallyclean : clean
+	set -e; for d in ${DIRS}; do $(MAKE) -C $${d} reallyclean; done
+
+sync_config:
+	cp -f src/config.mk src/mosquitto/config.mk
+
+mosquitto: sync_config
+ifeq ($(UNAME),Darwin)
+	$(error Please compile using CMake on Mac OS X)
+endif
+	set -e; for d in ${DIRS}; do $(MAKE) -C $${d}; done
+
+.PHONY: all clean install sync_config mosquitto

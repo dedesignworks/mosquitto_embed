@@ -1,8 +1,8 @@
-defmodule MosquittoNifTest do
+defmodule MosquittoEmbedTest do
   use ExUnit.Case
-  doctest MosquittoNif
+  doctest MosquittoEmbed
 
   test "greets the world" do
-    assert MosquittoNif.hello() == :world
+    assert MosquittoEmbed.hello() == :world
   end
 end
