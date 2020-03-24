@@ -1,3 +1,3 @@
 [submodule "c_src/mosquitto"]
-	path = c_src/mosquitto
+	path = src/mosquitto
 	url = https://github.com/dedesignworks/mosquitto.git
