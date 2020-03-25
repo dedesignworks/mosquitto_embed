@@ -32,9 +32,16 @@ defmodule MosquittoEmbed.Driver do
         {:ok, state}
     end
 
+    defp port_control(cmd, msg, state = %{port: port}) do
+        port
+        |> :erlang.port_control(cmd, msg)
+        |> :erlang.binary_to_term()
+    end
+
     def handle_call({:hello, msg}, from, state = %{port: port, waiters: waiters}) do
         #:erlang.port_command(port, msg)
-        Logger.debug("control #{inspect(:erlang.binary_to_term(:erlang.port_control(port, @cmd_echo, msg)))}")
+        response = port_control(@cmd_echo, msg, state)
+        Logger.debug("control #{inspect(response)}")
         {:noreply, %{state | waiters: waiters ++ [from] }}
     end
 
