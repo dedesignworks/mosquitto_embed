@@ -15,6 +15,7 @@
 #include "erl_driver.h"
 
 #define CMD_ECHO 0
+#define CMD_INIT 1
 
 static char* get_s(const char* buf, int len);
 static void encode_ok(ei_x_buff* x);
@@ -83,6 +84,52 @@ static int cmd_echo(char *s, mosquitto_embed_data* data, ei_x_buff* x)
   // encode_error(x, conn);
   return 0;
 }
+
+static void args_to_argv(char * args, char*** argv, int* argc)
+{
+  
+  
+  int count = 1;
+  for(int i =0; args[i] != '\0'; i++)
+  {
+    if(args[i] == ' ')
+    {
+      count = count + 1;
+    }
+  }
+  
+  char **v = (char**)driver_alloc(count * sizeof(char *));
+
+  // Note the args is already duplicated using get_s() so it is safe
+  // here to chop the string up
+  int j = 0;
+  v[j] = &args[0];
+  j++;
+  for(int i =0; args[i] != '\0'; i++)
+  {
+    if(args[i] == ' ')
+    {
+      args[i] = '\0';
+      v[j++] = &args[i+1];
+    }
+  }
+
+  *argc = count;
+  *argv = v;
+}
+
+static int cmd_init(char *args, mosquitto_embed_data* data, ei_x_buff* x)
+{
+  int argc;
+  char **argv;
+
+  args_to_argv(args, &argv, &argc);
+
+
+  return 0;
+}
+
+
 
 static ErlDrvSSizeT control(ErlDrvData drv_data, unsigned int command, char *buf, 
                    ErlDrvSizeT len, char **rbuf, ErlDrvSizeT rlen)
@@ -199,10 +246,10 @@ static void encode_ok(ei_x_buff* x)
 
 static ErlDrvBinary* ei_x_to_new_binary(ei_x_buff* x)
 {
-    ErlDrvBinary* bin = driver_alloc_binary(x->index);
-    if (bin != NULL)
-	memcpy(&bin->orig_bytes[0], x->buff, x->index);
-    return bin;
+  ErlDrvBinary* bin = driver_alloc_binary(x->index);
+  if (bin != NULL)
+	  memcpy(&bin->orig_bytes[0], x->buff, x->index);
+  return bin;
 }
 
 

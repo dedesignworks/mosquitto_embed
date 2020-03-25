@@ -4,6 +4,7 @@ defmodule MosquittoEmbed.Driver do
 
     # These must be kept in sync with mosquitto_embed.c
     @cmd_echo 0
+    @cmd_init 1
 
     @servername __MODULE__
     @portname 'mosquitto_embed'

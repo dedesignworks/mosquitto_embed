@@ -28,7 +28,7 @@ PREFIX = $(MIX_APP_PATH)/priv
 BUILD  = $(MIX_APP_PATH)/obj
 
 CFLAGS ?= -O2 -Wall -Wextra -Wno-unused-parameter
-CFLAGS += -std=c99 -D_GNU_SOURCE -fPIC
+CFLAGS += -std=c99 -D_GNU_SOURCE -fPIC 
 
 CPPFLAGS += -fPIC
 
@@ -103,7 +103,6 @@ endif
 
 
 MOSQUITTOD_OBJS=	\
-		${MOSQUITTOD_SRC}/mosquitto.o \
 		${MOSQUITTOD_SRC}/alias_mosq.o \
 		${MOSQUITTOD_SRC}/bridge.o \
 		${MOSQUITTOD_SRC}/conf.o \
@@ -179,6 +178,9 @@ $(OBJ): $(HEADERS) src/Makefile
 
 $(BUILD)/%.o: src/%.c
 	$(CC) -c $(ERL_CFLAGS) $(CFLAGS) -o $@ $<
+
+$(BUILD)/mosquitto_main.o : src/mosquitto_main.c src/mosquitto/src/mosquitto_broker_internal.h
+	${CC} $(BROKER_CPPFLAGS) $(BROKER_CFLAGS) -I"$(CURDIR)/src/mosquitto/src" -I"$(CURDIR)/src/mosquitto" -I"$(CURDIR)/src/mosquitto/lib" -I"$(CURDIR)/src/mosquitto/src/deps" -c $< -o $@
 
 # ${CROSS_COMPILE}$(CC) -shared $(LIB_LDFLAGS) $^ -o $@ ${LIB_LIBADD}
 $(PORTLIB): $(OBJ) $(MOSQUITTOD_OBJS)
