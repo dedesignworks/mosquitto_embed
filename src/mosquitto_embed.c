@@ -11,12 +11,14 @@
 #include <sys/ioctl.h>
 #include <fcntl.h>
 
+#include "ei.h"
 #include "erl_driver.h"
 
-// #define BLE_PORT    "/dev/ttyS1"
-// #define BLE_BAUD    B115200
-// #define BLE_PARITY  0
+#define CMD_ECHO 0
 
+static char* get_s(const char* buf, int len);
+static void encode_ok(ei_x_buff* x);
+static ErlDrvBinary* ei_x_to_new_binary(ei_x_buff* x);
 
 //----------------------------------
 // Defines must be in sync with .erl
@@ -28,17 +30,17 @@ typedef struct {
 } mosquitto_embed_data;
 
 
-static ErlDrvData mosquitto_embed_start(ErlDrvPort port, char *buff)
+static ErlDrvData start(ErlDrvPort port, char *buff)
 {
   // char *portname = BLE_PORT;
-  int fd = -1;
-  struct termios tty;
+  // int fd = -1;
 
   //----------------------------------
   // Create the Erlang Driver Ptr
   //----------------------------------
   mosquitto_embed_data* d = (mosquitto_embed_data*)driver_alloc(sizeof(mosquitto_embed_data));
   d->port = port;
+  set_port_control_flags(port, PORT_CONTROL_FLAG_BINARY);
   //----------------------------------
   // Open the Serial Port (TTY)
   //----------------------------------
@@ -52,42 +54,88 @@ static ErlDrvData mosquitto_embed_start(ErlDrvPort port, char *buff)
   // Set up to receive notifications when the serial_port is ready to be "read"
   //driver_select(d->port, (ErlDrvEvent)d->serial_port, ERL_DRV_READ,1);
 
-  driver_output(d->port, "Started!", 9);
-
   return (ErlDrvData)d;
 
-exit_on_error:
-  //Try to gracefully cleanup
-  driver_free(d);
+// exit_on_error:
+//   //Try to gracefully cleanup
+//   driver_free(d);
 
-  if (fd != -1)
-  {
-    close(fd);
-  }
-  return ERL_DRV_ERROR_GENERAL;
+//   if (fd != -1)
+//   {
+//     close(fd);
+//   }
+//   return ERL_DRV_ERROR_GENERAL;
 }
 
-static void mosquitto_embed_stop(ErlDrvData handle)
+static void stop(ErlDrvData handle)
 {
-  mosquitto_embed_data* d = (mosquitto_embed_data*)handle;
+  // mosquitto_embed_data* d = (mosquitto_embed_data*)handle;
+  // fprintf(stderr, "\nstop\n");
   // driver_select(d->port, (ErlDrvEvent)d->serial_port, ERL_DRV_READ, 0);
   driver_free((char*)handle);
 }
 
-static void mosquitto_embed_output(ErlDrvData handle, char *buff, 
+static int cmd_echo(char *s, mosquitto_embed_data* data, ei_x_buff* x)
+{
+  // mosquitto_embed_data* d = (mosquitto_embed_data*)handle;
+  driver_output(data->port, s, strlen(s));
+  encode_ok(x);
+  // encode_error(x, conn);
+  return 0;
+}
+
+static ErlDrvSSizeT control(ErlDrvData drv_data, unsigned int command, char *buf, 
+                   ErlDrvSizeT len, char **rbuf, ErlDrvSizeT rlen)
+{
+  int r;
+  ei_x_buff x;
+  mosquitto_embed_data* data = (mosquitto_embed_data*)drv_data;
+  char* s;
+
+  ei_x_new_with_version(&x);
+  switch (command) {
+    case CMD_ECHO: 
+        s = get_s(buf, len);
+        r = cmd_echo(s, data, &x);  
+        driver_free(s);
+        break;
+      // case DRV_CONNECT:    r = do_connect(s, data, &x);  break;
+      // case DRV_DISCONNECT: r = do_disconnect(data, &x);  break;
+      // case DRV_SELECT:     r = do_select(s, data, &x);   break;
+      default:             r = -1;        break;
+  }
+  *rbuf = (char*)ei_x_to_new_binary(&x);
+  ei_x_free(&x);
+  
+  return r;
+}
+
+static void handle_erl_msg(ErlDrvData handle, char *buff, 
                    ErlDrvSizeT bufflen)
 {
   mosquitto_embed_data* d = (mosquitto_embed_data*)handle;
-  // write(d->serial_port,buff,bufflen);
+  fprintf(stderr, "\noutput\n");
+
+  // echo back
+  driver_output(d->port, buff, bufflen);
+
+  // EXTERN int erl_drv_output_term(ErlDrvTermData port,
+	// 		       ErlDrvTermData* data,
+	// 		       int len);
+
+
+
+  // driver_output(d->port, "yes", 3);
 }
 
 
-static void mosquitto_embed_ready_input(ErlDrvData handle, ErlDrvEvent event)
+static void handle_socket_input(ErlDrvData handle, ErlDrvEvent event)
 {
   // Note:  If we ever add a second port, we must test 
   // event == d->serial_port
 
-  int bytes_read = 0;
+  // int bytes_read = 0;
+  // fprintf(stderr, "\ninput\n");
 
   // mosquitto_embed_data* d;
   // char* read_buf;
@@ -133,17 +181,42 @@ static void mosquitto_embed_ready_input(ErlDrvData handle, ErlDrvEvent event)
 
 }
 
+static char* get_s(const char* buf, int len)
+{
+    char* result;
+    if (len < 1 || len > 10000) return NULL;
+    result = driver_alloc(len+1);
+    memcpy(result, buf, len);
+    result[len] = '\0';
+    return result;
+}
+
+static void encode_ok(ei_x_buff* x)
+{
+    const char* k_ok = "ok";
+    ei_x_encode_atom(x, k_ok);
+}
+
+static ErlDrvBinary* ei_x_to_new_binary(ei_x_buff* x)
+{
+    ErlDrvBinary* bin = driver_alloc_binary(x->index);
+    if (bin != NULL)
+	memcpy(&bin->orig_bytes[0], x->buff, x->index);
+    return bin;
+}
+
+
 ErlDrvEntry mosquitto_embed_driver_entry = {
     NULL,                         /* F_PTR init, called when driver is loaded */
-    mosquitto_embed_start,        /* L_PTR start, called when port is opened */
-    mosquitto_embed_stop,         /* F_PTR stop, called when port is closed */
-    mosquitto_embed_output,       /* F_PTR output, called when erlang has sent */
-    mosquitto_embed_ready_input,  /* F_PTR ready_input, called when input descriptor ready */
+    start,                        /* L_PTR start, called when port is opened */
+    stop,                         /* F_PTR stop, called when port is closed */
+    handle_erl_msg,               /* F_PTR output, called when erlang has sent */
+    handle_socket_input,          /* F_PTR ready_input, called when input descriptor ready */
     NULL,                         /* F_PTR ready_output, called when output descriptor ready */
     "mosquitto_embed",            /* char *driver_name, the argument to open_port */
     NULL,                         /* F_PTR finish, called when unloaded */
     NULL,                         /* void *handle, Reserved by VM */
-    NULL,                         /* F_PTR control, port_command callback */
+    control,                      /* F_PTR control, port_command callback */
     NULL,                         /* F_PTR timeout, reserved */
     NULL,                         /* F_PTR outputv, reserved */
     NULL,                         /* F_PTR ready_async, only for async drivers */

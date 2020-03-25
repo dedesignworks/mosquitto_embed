@@ -2,11 +2,18 @@ defmodule MosquittoEmbed.Driver do
     use GenServer
     require Logger
 
+    # These must be kept in sync with mosquitto_embed.c
+    @cmd_echo 0
 
+    @servername __MODULE__
     @portname 'mosquitto_embed'
 
     def start_link(args \\ []) do
-        GenServer.start_link(__MODULE__, args)
+        GenServer.start_link(__MODULE__, args, name: @servername)
+    end
+
+    def hello(msg) do
+        GenServer.call(@servername, {:hello, msg})
     end
 
     def init(args) do
@@ -21,21 +28,27 @@ defmodule MosquittoEmbed.Driver do
         end
 
         port = :erlang.open_port({:spawn, @portname}, [:binary])
-        state = %{port: port}
+        state = %{port: port, waiters: []}
         {:ok, state}
     end
 
-    def handle_info(stop, state = %{port: port}) do
+    def handle_call({:hello, msg}, from, state = %{port: port, waiters: waiters}) do
+        #:erlang.port_command(port, msg)
+        Logger.debug("control #{inspect(:erlang.binary_to_term(:erlang.port_control(port, @cmd_echo, msg)))}")
+        {:noreply, %{state | waiters: waiters ++ [from] }}
+    end
+
+    def handle_info(:stop, state = %{port: port}) do
         :erlang.port_close(port)
         {:noreply, state}
     end
 
-    def handle_info({port,{:data,data}}, state = %{port: port}) do
+    def handle_info({port,{:data,data}}, state = %{port: port, waiters: [waiter | waiters]}) do
         Logger.debug("Data: #{inspect(data)}")
+        GenServer.reply(waiter, data)
         state = handle_data(data, state)
-        {:noreply, state};
+        {:noreply, %{state | waiters: waiters} };
     end
-
 
     def handle_data(data, state) do
         state
