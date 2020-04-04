@@ -36,6 +36,7 @@ Contributors:
 
 #ifndef WIN32
 #  include <sys/time.h>
+#  include <sys/socket.h>
 #endif
 
 #include <errno.h>
@@ -56,6 +57,7 @@ Contributors:
 #include "memory_mosq.h"
 #include "misc_mosq.h"
 #include "util_mosq.h"
+#include "packet_mosq.h"
 
 struct mosquitto_db int_db;
 
@@ -78,9 +80,23 @@ void handle_sigusr2(int signal);
 void handle_sighup(int signal);
 #endif
 
+typedef void (*mosquitto__on_accept_cb)(void * mosq_context, mosq_sock_t sock, void* caller_context);
+typedef void(*mosquitto__on_write_block_cb)(void * mosq_context, mosq_sock_t sock, void *caller_context);
+
+static mosq_sock_t *listensock = NULL;
+static int listensock_count = 0;
+static int listensock_index = 0;
+static struct mosquitto__config config;
+
 struct mosquitto_db *mosquitto__get_db(void)
 {
 	return &int_db;
+}
+
+void mosquitto__get_listensock(mosq_sock_t **lsock,int *lsock_count)
+{
+    *lsock = listensock;
+    *lsock_count = listensock_count;
 }
 
 /* mosquitto shouldn't run as root.
@@ -199,13 +215,8 @@ void mosquitto__daemonise(void)
 #endif
 }
 
-
 int mosquitto_init(int argc, char *argv[])
 {
-	mosq_sock_t *listensock = NULL;
-	int listensock_count = 0;
-	int listensock_index = 0;
-	struct mosquitto__config config;
 	int i, j;
 	FILE *pid;
 	int rc;
@@ -214,9 +225,9 @@ int mosquitto_init(int argc, char *argv[])
 #else
 	struct timeval tv;
 #endif
-	struct mosquitto *ctxt, *ctxt_tmp;
 
-#if defined(WIN32) || defined(__CYGWIN__)
+
+#if !defined(WITH_BROKER_LIB) && (defined(WIN32) || defined(__CYGWIN__))
 	if(argc == 2){
 		if(!strcmp(argv[1], "run")){
 			service_run();
@@ -253,9 +264,11 @@ int mosquitto_init(int argc, char *argv[])
 	if(rc != MOSQ_ERR_SUCCESS) return rc;
 	int_db.config = &config;
 
+#ifndef WITH_BROKER_LIB
 	if(config.daemon){
 		mosquitto__daemonise();
 	}
+
 
 	if(config.daemon && config.pid_file){
 		pid = mosquitto__fopen(config.pid_file, "wt", false);
@@ -267,6 +280,7 @@ int mosquitto_init(int argc, char *argv[])
 			return 1;
 		}
 	}
+#endif
 
 	rc = db__open(&config, &int_db);
 	if(rc != MOSQ_ERR_SUCCESS){
@@ -341,6 +355,7 @@ int mosquitto_init(int argc, char *argv[])
 		return 1;
 	}
 
+#ifndef WITH_BROKER_LIB
 	rc = drop_privileges(&config, false);
 	if(rc != MOSQ_ERR_SUCCESS) return rc;
 
@@ -357,6 +372,7 @@ int mosquitto_init(int argc, char *argv[])
 #ifdef WIN32
 	CreateThread(NULL, 0, SigThreadProc, NULL, 0, NULL);
 #endif
+#endif
 
 #ifdef WITH_BRIDGE
 	for(i=0; i<config.bridge_count; i++){
@@ -370,11 +386,14 @@ int mosquitto_init(int argc, char *argv[])
 #ifdef WITH_SYSTEMD
 	sd_notify(0, "READY=1");
 #endif
+    return rc;
+}
 
-	run = 1;
-	rc = mosquitto_main_loop(&int_db, listensock, listensock_count);
-
-	log__printf(NULL, MOSQ_LOG_INFO, "mosquitto version %s terminating", VERSION);
+int mosquitto_deinit()
+{
+    int i;
+    int rc = 0;
+    struct mosquitto *ctxt, *ctxt_tmp;
 
 #ifdef WITH_WEBSOCKETS
 	for(i=0; i<int_db.config->listener_count; i++){
@@ -446,6 +465,98 @@ int mosquitto_init(int argc, char *argv[])
 	net__broker_cleanup();
 
 	return rc;
+}
+
+void mosquitto__readsock(struct mosquitto_db *db, mosq_sock_t ready_sock, mosquitto__on_accept_cb on_accept, void* caller_context)
+{
+	struct mosquitto *context = NULL;
+	int rc;
+
+	// See if this is a listening socket.  If so accept any pending connections
+	for(int i=0; i < listensock_count; i++)
+	{
+		if(listensock[i] == ready_sock)
+		{
+			int fd;
+			while((fd = net__socket_accept(db, listensock[i])) != -1)
+			{
+				
+				HASH_FIND(hh_sock, db->contexts_by_sock, &(fd), sizeof(mosq_sock_t), context);
+				if(!context)
+				{
+					log__printf(NULL, MOSQ_LOG_ERR, "Error in accepting: no context");
+				}
+				on_accept(context, fd, caller_context);
+				log__printf(NULL, MOSQ_LOG_NOTICE, "Accepted %i", fd);
+			}
+			return;
+		}
+	}
+
+	log__printf(NULL, MOSQ_LOG_NOTICE, "Reading %i", ready_sock);
+	HASH_FIND(hh_sock, db->contexts_by_sock, &(ready_sock), sizeof(mosq_sock_t), context);
+	if(!context)
+	{
+		log__printf(NULL, MOSQ_LOG_ERR, "Error in readying socket: no context");
+		goto exit_on_error;
+	}
+
+	do{
+		rc = packet__read(db, context);
+		if(rc){
+			do_disconnect(db, context, rc);
+			break;
+		}
+	}while(SSL_DATA_PENDING(context));
+
+
+  exit_on_error:
+    return;
+}
+
+void mosquitto__writesock(struct mosquitto_db *db, int ready_sock)
+{
+	struct mosquitto *context;
+	int err;
+	socklen_t len;
+	int rc;
+
+
+	HASH_FIND(hh_sock, db->contexts_by_sock, &(ready_sock), sizeof(mosq_sock_t), context);
+	if(context->state == mosq_cs_connect_pending){
+	len = sizeof(int);
+	if(!getsockopt(ready_sock, SOL_SOCKET, SO_ERROR, (char *)&err, &len)){
+		if(err == 0){
+			mosquitto__set_state(context, mosq_cs_new);
+		}
+		}else{
+			do_disconnect(db, context, MOSQ_ERR_CONN_LOST);
+			return;
+		}
+	}
+	rc = packet__write(context);
+	if(rc){
+		do_disconnect(db, context, rc);
+	}
+	
+}
+
+void mosquitto__closesock(struct mosquitto_db *db, int ready_sock)
+{
+  	struct mosquitto *context;
+	
+	HASH_FIND(hh_sock, db->contexts_by_sock, &(ready_sock), sizeof(mosq_sock_t), context);
+	if(context)
+	{
+		do_disconnect(db, context, MOSQ_ERR_CONN_LOST);
+	}
+}
+
+void mosquitto__on_write_block(void * mosq_context, mosquitto__on_write_block_cb on_write_block_cb, void* caller_context)
+{
+	struct mosquitto *context = mosq_context;
+	context->on_write_block = on_write_block_cb;
+	context->write_block_userdata = caller_context;
 }
 
 #ifdef WIN32

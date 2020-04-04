@@ -102,6 +102,9 @@ WITH_BUNDLED_DEPS:=yes
 # Build with coverage options
 WITH_COVERAGE:=no
 
+# Build Broker as shared library
+WITH_BROKER_LIB:=yes
+
 # =============================================================================
 # End of user configuration
 # =============================================================================
@@ -288,6 +291,10 @@ endif
 ifeq ($(WITH_WEBSOCKETS),static)
 	BROKER_CPPFLAGS:=$(BROKER_CPPFLAGS) -DWITH_WEBSOCKETS
 	BROKER_LDADD:=$(BROKER_LDADD) -static -lwebsockets
+endif
+
+ifeq ($(WITH_BROKER_LIB),yes)
+	BROKER_CPPFLAGS:=$(BROKER_CPPFLAGS) -DWITH_BROKER_LIB
 endif
 
 INSTALL?=install

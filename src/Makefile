@@ -169,7 +169,7 @@ MOSQUITTOD_OBJS=	\
 HEADERS =$(wildcard src/*.h)
 OBJ=$(SRC:src/%.c=$(BUILD)/%.o)
 PORTLIB=$(PREFIX)/mosquitto_embed$(LIBEXT)
-
+MOSQ_INC=-I"$(CURDIR)/src/mosquitto/src" -I"$(CURDIR)/src/mosquitto" -I"$(CURDIR)/src/mosquitto/lib" -I"$(CURDIR)/src/mosquitto/src/deps"
 all: install
 
 install: $(PREFIX) $(BUILD) mosquitto $(PORTLIB)
@@ -179,8 +179,11 @@ $(OBJ): $(HEADERS) src/Makefile
 $(BUILD)/%.o: src/%.c
 	$(CC) -c $(ERL_CFLAGS) $(CFLAGS) -o $@ $<
 
+$(BUILD)/mosquitto_embed.o: src/mosquitto_embed.c
+	$(CC) -c $(ERL_CFLAGS) $(CFLAGS) $(MOSQ_INC) -o $@ $<
+
 $(BUILD)/mosquitto_main.o : src/mosquitto_main.c src/mosquitto/src/mosquitto_broker_internal.h
-	${CC} $(BROKER_CPPFLAGS) $(BROKER_CFLAGS) -I"$(CURDIR)/src/mosquitto/src" -I"$(CURDIR)/src/mosquitto" -I"$(CURDIR)/src/mosquitto/lib" -I"$(CURDIR)/src/mosquitto/src/deps" -c $< -o $@
+	${CC} $(BROKER_CPPFLAGS) $(BROKER_CFLAGS) $(MOSQ_INC) -c $< -o $@
 
 # ${CROSS_COMPILE}$(CC) -shared $(LIB_LDFLAGS) $^ -o $@ ${LIB_LIBADD}
 $(PORTLIB): $(OBJ) $(MOSQUITTOD_OBJS)

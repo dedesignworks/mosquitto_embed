@@ -30,6 +30,9 @@ defmodule MosquittoEmbed.Driver do
 
         port = :erlang.open_port({:spawn, @portname}, [:binary])
         state = %{port: port, waiters: []}
+        response = port_control(@cmd_init, "", state)
+        Logger.debug("control init #{inspect(response)}")
+        
         {:ok, state}
     end
 
