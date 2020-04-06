@@ -14,9 +14,9 @@
 #include "ei.h"
 #include "erl_driver.h"
 
-
 #define event2sock(EV) ((int) ((long) (EV)))
 #define sock2event(FD) ((ErlDrvEvent) ((long) (FD)))
+#define DEFAULT_POLL_PERIOD 10
 
 #include "mosquitto_broker_internal.h"
 
@@ -38,18 +38,21 @@ void mosquitto__readsock(struct mosquitto_db *db, mosq_sock_t ready_sock, mosqui
 void mosquitto__writesock(struct mosquitto_db *db, mosq_sock_t ready_sock);
 void mosquitto__closesock(struct mosquitto_db *db, mosq_sock_t ready_sock);
 void mosquitto__on_write_block(void * mosq_context, mosquitto__on_write_block_cb on_write_block_cb, void* caller_context);
+void mosquitto__loop_step(struct mosquitto_db *db);
 
 //----------------------------------
 // Defines must be in sync with mosquitto_embed.ex
 //----------------------------------
 #define CMD_ECHO 0
 #define CMD_INIT 1
+#define CMD_POLL_PERIOD 2
 
 typedef struct {
   ErlDrvPort  port;
   struct mosquitto_db *db;
   mosq_sock_t *listensock;
   int listensock_count;
+  int poll_period;
 } mosquitto_embed_data;
 
 // This is needed for select_stop()
@@ -192,7 +195,12 @@ static int cmd_init(char *args, mosquitto_embed_data* d, ei_x_buff* x)
     driver_select(d->port, sock2event(d->listensock[i]), ERL_DRV_READ,1);
   }
 
-  // driver_set_timer(d, 5);
+  int_db->start_time = mosquitto_time();
+#ifdef WITH_PERSISTENCE
+  int_db->last_backup = mosquitto_time();
+#endif
+  d->poll_period = DEFAULT_POLL_PERIOD;
+  driver_set_timer(d->port, d->poll_period);
 
   encode_ok(x);
   return 0;
@@ -268,7 +276,10 @@ static void handle_socket_input(ErlDrvData handle, ErlDrvEvent event)
   fprintf(stderr, "handle_socket_input\n");
 
   mosquitto__readsock(d->db,event2sock(event), on_socket_accept, d);
+  
+  mosquitto__loop_step(int_db);
 
+  driver_set_timer(d->port, d->poll_period);
   // mosquitto__writesock(d->db,event2sock(event));
 }
 
@@ -284,7 +295,11 @@ static void handle_socket_output(ErlDrvData handle, ErlDrvEvent event)
 /* Handling of timeout in driver */
 static void timeout(ErlDrvData drv_data)
 {
+  mosquitto_embed_data *d = (mosquitto_embed_data*)drv_data;
 
+  mosquitto__loop_step(int_db);
+
+  driver_set_timer(d->port, d->poll_period);
 }
 
 static void process_exit(ErlDrvData handle, ErlDrvMonitor *monitor)

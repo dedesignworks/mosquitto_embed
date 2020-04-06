@@ -218,7 +218,6 @@ void mosquitto__daemonise(void)
 int mosquitto_init(int argc, char *argv[])
 {
 	int i, j;
-	FILE *pid;
 	int rc;
 #ifdef WIN32
 	SYSTEMTIME st;
@@ -493,7 +492,6 @@ void mosquitto__readsock(struct mosquitto_db *db, mosq_sock_t ready_sock, mosqui
 		}
 	}
 
-	log__printf(NULL, MOSQ_LOG_NOTICE, "Reading %i", ready_sock);
 	HASH_FIND(hh_sock, db->contexts_by_sock, &(ready_sock), sizeof(mosq_sock_t), context);
 	if(!context)
 	{
@@ -514,13 +512,95 @@ void mosquitto__readsock(struct mosquitto_db *db, mosq_sock_t ready_sock, mosqui
     return;
 }
 
+void mosquitto__loop_step(struct mosquitto_db *db)
+{
+	#ifdef WITH_PERSISTENCE
+		time_t last_backup;
+	#endif
+	time_t now = 0;
+	int time_count = 0;
+	struct mosquitto *context, *ctxt_tmp;
+
+	context__free_disused(db);
+#ifdef WITH_SYS_TREE
+	if(db->config->sys_interval > 0){
+		sys_tree__update(db, db->config->sys_interval, db->start_time);
+	}
+#endif
+
+	HASH_ITER(hh_sock, db->contexts_by_sock, context, ctxt_tmp){
+		if(time_count > 0){
+			time_count--;
+		}else{
+			time_count = 1000;
+			now = mosquitto_time();
+		}
+		context->pollfd_index = -1;
+
+		if(!(context->keepalive)
+				|| context->bridge
+				|| now - context->last_msg_in <= (time_t)(context->keepalive)*3/2){
+
+			if(db__message_write(db, context) == MOSQ_ERR_SUCCESS){
+			}else{
+				do_disconnect(db, context, MOSQ_ERR_CONN_LOST);
+			}
+
+		}else{
+			/* Client has exceeded keepalive*1.5 */
+			do_disconnect(db, context, MOSQ_ERR_KEEPALIVE);
+		}
+	}
+
+	now = time(NULL);
+	session_expiry__check(db, now);
+	will_delay__check(db, now);
+
+#ifdef WITH_PERSISTENCE
+	if(db->config->persistence && db->config->autosave_interval){
+		if(db->config->autosave_on_changes){
+			if(db->persistence_changes >= db->config->autosave_interval){
+				persist__backup(db, false);
+				db->persistence_changes = 0;
+			}
+		}else{
+			if(db->last_backup + db->config->autosave_interval < mosquitto_time()){
+				persist__backup(db, false);
+				db->last_backup = mosquitto_time();
+			}
+		}
+	}
+#endif
+
+#ifdef WITH_PERSISTENCE
+		if(flag_db_backup){
+			persist__backup(db, false);
+			flag_db_backup = false;
+		}
+#endif
+		if(flag_reload){
+			log__printf(NULL, MOSQ_LOG_INFO, "Reloading config.");
+			config__read(db, db->config, true);
+			mosquitto_security_cleanup(db, true);
+			mosquitto_security_init(db, true);
+			mosquitto_security_apply(db);
+			log__close(db->config);
+			log__init(db->config);
+			flag_reload = false;
+		}
+		if(flag_tree_print){
+			sub__tree_print(db->subs, 0);
+			flag_tree_print = false;
+		}
+
+}
+
 void mosquitto__writesock(struct mosquitto_db *db, int ready_sock)
 {
 	struct mosquitto *context;
 	int err;
 	socklen_t len;
 	int rc;
-
 
 	HASH_FIND(hh_sock, db->contexts_by_sock, &(ready_sock), sizeof(mosq_sock_t), context);
 	if(context->state == mosq_cs_connect_pending){
