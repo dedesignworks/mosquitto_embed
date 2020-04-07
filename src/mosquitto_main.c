@@ -59,6 +59,9 @@ Contributors:
 #include "util_mosq.h"
 #include "packet_mosq.h"
 
+#include "mqtt_protocol.h"
+#include "mosquitto_embed.h"
+
 struct mosquitto_db int_db;
 
 bool flag_reload = false;
@@ -79,9 +82,6 @@ void handle_sigusr2(int signal);
 #ifdef SIGHUP
 void handle_sighup(int signal);
 #endif
-
-typedef void (*mosquitto__on_accept_cb)(void * mosq_context, mosq_sock_t sock, void* caller_context);
-typedef void(*mosquitto__on_write_block_cb)(void * mosq_context, mosq_sock_t sock, void *caller_context);
 
 static mosq_sock_t *listensock = NULL;
 static int listensock_count = 0;
@@ -514,9 +514,6 @@ void mosquitto__readsock(struct mosquitto_db *db, mosq_sock_t ready_sock, mosqui
 
 void mosquitto__loop_step(struct mosquitto_db *db)
 {
-	#ifdef WITH_PERSISTENCE
-		time_t last_backup;
-	#endif
 	time_t now = 0;
 	int time_count = 0;
 	struct mosquitto *context, *ctxt_tmp;
@@ -632,13 +629,51 @@ void mosquitto__closesock(struct mosquitto_db *db, int ready_sock)
 	}
 }
 
-void mosquitto__on_write_block(void * mosq_context, mosquitto__on_write_block_cb on_write_block_cb, void* caller_context)
+void mosquitto__on_write_block(struct mosquitto * mosq_context, mosquitto__on_write_block_cb on_write_block_cb, void* caller_context)
 {
 	struct mosquitto *context = mosq_context;
 	context->on_write_block = on_write_block_cb;
 	context->write_block_userdata = caller_context;
 }
 
+
+struct mosquitto * mosquitto_plugin__create_context(struct mosquitto_db *db, char* client_id)
+{
+	struct mosquitto *context;
+	char* context_id = mosquitto__strdup(client_id);
+
+	
+	// int dummysock = socket(AF_UNIX, SOCK_STREAM, 0);
+	context = context__init(db, -1);
+	context->id = context_id;
+
+	HASH_ADD_KEYPTR(hh_id, db->contexts_by_id, context->id, strlen(context->id), context);
+	HASH_ADD_KEYPTR(hh_id, db->contexts_by_plugin, context->id, strlen(context->id), context);
+
+	return context;
+}
+
+void mosquitto_plugin__subscribe(
+	struct mosquitto_db *db, 
+	struct mosquitto * mosq_context, 
+	char *sub, 
+	mosq_subscribe_callback subscribe_callback, 
+	mosq_user_context_t user_context)
+{
+	int rc = 0;
+	int rc2;
+	uint8_t subscription_options = MQTT_SUB_OPT_SEND_RETAIN_ALWAYS;
+	uint32_t subscription_identifier = 0;
+	uint8_t qos;
+
+	rc2 = sub__add_plugin(db, mosq_context, sub, qos, subscription_identifier, subscription_options, &db->subs, subscribe_callback, user_context);
+	sub__retain_queue(db, mosq_context, sub, qos, subscription_identifier);
+}
+
+void mosquitto__unsubscribe()
+{
+
+}
 #ifdef WIN32
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
 {

@@ -24,21 +24,7 @@ static char* get_s(const char* buf, int len);
 static void encode_ok(ei_x_buff* x);
 static ErlDrvBinary* ei_x_to_new_binary(ei_x_buff* x);
 
-//----------------------------------
-// TODO: Figure out header for Mosquitto Broker Lib
-//----------------------------------
-struct mosquitto_db *mosquitto__get_db(void);
-void mosquitto__get_listensock(mosq_sock_t **lsock,int *lsock_count);
-int mosquitto_init(int argc, char *argv[]);
-int mosquitto_deinit();
-
-typedef void (*mosquitto__on_accept_cb)(void * mosq_context, mosq_sock_t sock, void* caller_context);
-typedef void(*mosquitto__on_write_block_cb)(void * mosq_context, mosq_sock_t sock, void *caller_context);
-void mosquitto__readsock(struct mosquitto_db *db, mosq_sock_t ready_sock, mosquitto__on_accept_cb on_accept, void* caller_context);
-void mosquitto__writesock(struct mosquitto_db *db, mosq_sock_t ready_sock);
-void mosquitto__closesock(struct mosquitto_db *db, mosq_sock_t ready_sock);
-void mosquitto__on_write_block(void * mosq_context, mosquitto__on_write_block_cb on_write_block_cb, void* caller_context);
-void mosquitto__loop_step(struct mosquitto_db *db);
+#include "mosquitto_embed.h"
 
 //----------------------------------
 // Defines must be in sync with mosquitto_embed.ex
@@ -46,6 +32,7 @@ void mosquitto__loop_step(struct mosquitto_db *db);
 #define CMD_ECHO 0
 #define CMD_INIT 1
 #define CMD_POLL_PERIOD 2
+#define CMD_SUBSCRIBE 3
 
 typedef struct {
   ErlDrvPort  port;
@@ -56,7 +43,7 @@ typedef struct {
 } mosquitto_embed_data;
 
 // This is needed for select_stop()
-static struct mosquitto_db *int_db;
+static struct mosquitto_db *db;
 
 static ErlDrvData start(ErlDrvPort port, char *buff)
 {
@@ -98,7 +85,7 @@ static ErlDrvData start(ErlDrvPort port, char *buff)
 static void stop(ErlDrvData handle)
 {
   mosquitto_embed_data* d = (mosquitto_embed_data*)handle;
-  // fprintf(stderr, "\nstop\n");
+  // fprintf(stderr, "\r\nstop\r\n");
   // driver_select(d->port, (ErlDrvEvent)d->serial_port, ERL_DRV_READ, 0);
 
   for(int i=0; i < d->listensock_count; i++)
@@ -125,7 +112,7 @@ static void args_to_argv(char * args,  int* argc, char*** argv)
   
   int count = 1;
 
-  fprintf(stderr, "args_to_argv %s\n", args);
+  fprintf(stderr, "args_to_argv %s\r\n", args);
 
   if(args == NULL)
   {
@@ -138,7 +125,7 @@ static void args_to_argv(char * args,  int* argc, char*** argv)
 
   for(int i =0; args[i] != '\0'; i++)
   {
-    fprintf(stderr, "args_to_argv %d\n", i);
+    fprintf(stderr, "args_to_argv %d\r\n", i);
     if(args[i] == ' ')
     {
       count = count + 1;
@@ -147,7 +134,7 @@ static void args_to_argv(char * args,  int* argc, char*** argv)
   
   int size = count * sizeof(char *);
   char **v = (char**)driver_alloc(size);
-  fprintf(stderr, "driver_alloc %d\n", size);
+  fprintf(stderr, "driver_alloc %d\r\n", size);
 
   // Note the args is already duplicated using get_s() so it is safe
   // here to chop the string up
@@ -171,36 +158,61 @@ static void args_to_argv(char * args,  int* argc, char*** argv)
   *argv = v;
 }
 
+static int my_context = 42;
+
+static void subscribe_callback(
+  struct mosquitto_db *db, 
+  struct mosquitto *context, 
+  const char *topic, 
+  struct mosquitto_msg_store *msg_store, 
+  mosq_user_context_t user_context)
+{
+  fprintf(stderr, "subscribe_callback\r\n");
+  fprintf(stderr, "%s %s %i\r\n", topic, (char*)UHPA_ACCESS_PAYLOAD(msg_store), *(int*)user_context);
+}
+
 static int cmd_init(char *args, mosquitto_embed_data* d, ei_x_buff* x)
 {
   int argc;
   char **argv;
 
-  fprintf(stderr, "\ninit\n");
+  fprintf(stderr, "\r\ninit\r\n");
 
   args_to_argv(args, &argc, &argv);
 
-  fprintf(stderr, "args_to_argv\n");
+  fprintf(stderr, "args_to_argv\r\n");
   mosquitto_init(argc, argv);
-  fprintf(stderr, "int_db\n");
-  int_db = mosquitto__get_db();
-  fprintf(stderr, "mosquitto__get_listensock\n");
+  fprintf(stderr, "int_db\r\n");
+  db = mosquitto__get_db();
+  fprintf(stderr, "mosquitto__get_listensock\r\n");
   mosquitto__get_listensock(&(d->listensock), &(d->listensock_count));
 
-  d->db = int_db;
+  d->db = db;
 
-  fprintf(stderr, "driver_select\n");
+  fprintf(stderr, "driver_select\r\n");
   for(int i=0; i < d->listensock_count; i++)
   {
     driver_select(d->port, sock2event(d->listensock[i]), ERL_DRV_READ,1);
   }
 
-  int_db->start_time = mosquitto_time();
+  db->start_time = mosquitto_time();
 #ifdef WITH_PERSISTENCE
   int_db->last_backup = mosquitto_time();
 #endif
   d->poll_period = DEFAULT_POLL_PERIOD;
   driver_set_timer(d->port, d->poll_period);
+
+  struct mosquitto * mosq_context = mosquitto_plugin__create_context(db, "erlclient");
+  if(mosq_context != NULL)
+  {
+    mosquitto_plugin__subscribe(db, mosq_context, "test", subscribe_callback, &my_context);
+  }
+  else
+  {
+    fprintf(stderr, "No Context\r\n");
+  }
+  
+  
 
   encode_ok(x);
   return 0;
@@ -252,17 +264,17 @@ static void handle_erl_msg(ErlDrvData handle, char *buff,
 	// 		       int len);
   // driver_output(d->port, "yes", 3);
 }
-static void on_write_block(void * mosq_context, mosq_sock_t sock, void *context)
+static void on_write_block(struct mosquitto * mosq_context, mosq_sock_t sock, mosq_user_context_t context)
 {
   mosquitto_embed_data *d = (mosquitto_embed_data*)context;
-  fprintf(stderr, "on_write_block\n");
+  fprintf(stderr, "on_write_block\r\n");
   driver_select(d->port, sock2event(sock), ERL_DRV_WRITE, 1);
 }
 
-static void on_socket_accept(void * mosq_context, mosq_sock_t sock, void* context)
+static void on_socket_accept(struct mosquitto * mosq_context, mosq_sock_t sock, void* context)
 {
   mosquitto_embed_data *d = (mosquitto_embed_data*)context;
-  fprintf(stderr, "on_socket_accept\n");
+  fprintf(stderr, "on_socket_accept\r\n");
 
   mosquitto__on_write_block(mosq_context, on_write_block, d);
 
@@ -273,11 +285,11 @@ static void on_socket_accept(void * mosq_context, mosq_sock_t sock, void* contex
 static void handle_socket_input(ErlDrvData handle, ErlDrvEvent event)
 {
   mosquitto_embed_data *d = (mosquitto_embed_data*)handle;
-  fprintf(stderr, "handle_socket_input\n");
+  fprintf(stderr, "handle_socket_input\r\n");
 
   mosquitto__readsock(d->db,event2sock(event), on_socket_accept, d);
   
-  mosquitto__loop_step(int_db);
+  mosquitto__loop_step(db);
 
   driver_set_timer(d->port, d->poll_period);
   // mosquitto__writesock(d->db,event2sock(event));
@@ -286,7 +298,7 @@ static void handle_socket_input(ErlDrvData handle, ErlDrvEvent event)
 static void handle_socket_output(ErlDrvData handle, ErlDrvEvent event)
 {
   mosquitto_embed_data *d = (mosquitto_embed_data*)handle;
-  fprintf(stderr, "handle_socket_output\n");
+  fprintf(stderr, "handle_socket_output\r\n");
 
   // Disable socket notfications here as mosquitto__writesock() might need to enable them
   driver_select(d->port, sock2event(event), ERL_DRV_WRITE, 0);
@@ -297,7 +309,7 @@ static void timeout(ErlDrvData drv_data)
 {
   mosquitto_embed_data *d = (mosquitto_embed_data*)drv_data;
 
-  mosquitto__loop_step(int_db);
+  mosquitto__loop_step(db);
 
   driver_set_timer(d->port, d->poll_period);
 }
@@ -312,7 +324,7 @@ static void process_exit(ErlDrvData handle, ErlDrvMonitor *monitor)
   unix driver would call close(event) */
 static void stop_select(ErlDrvEvent event, void* reserved)
 {
-  mosquitto__closesock(int_db, event2sock(event));
+  mosquitto__closesock(db, event2sock(event));
 }
 
 static char* get_s(const char* buf, int len)
