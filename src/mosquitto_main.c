@@ -648,7 +648,7 @@ struct mosquitto * mosquitto_plugin__create_context(struct mosquitto_db *db, cha
 	context->id = context_id;
 
 	HASH_ADD_KEYPTR(hh_id, db->contexts_by_id, context->id, strlen(context->id), context);
-	HASH_ADD_KEYPTR(hh_id, db->contexts_by_plugin, context->id, strlen(context->id), context);
+	// HASH_ADD_KEYPTR(hh_id, db->contexts_by_plugin, context->id, strlen(context->id), context);
 
 	return context;
 }
