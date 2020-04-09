@@ -21,8 +21,8 @@ defmodule MosquittoEmbed.Driver do
         :erlang.port_call(@portname, @cmd_echo, msg)
     end
 
-    def subscribe(topic) do
-        :erlang.port_call(@portname, @cmd_subscribe, topic)
+    def subscribe(topic, user_data) do
+        :erlang.port_call(@portname, @cmd_subscribe, {topic, user_data})
     end
 
     def init(args) do
@@ -39,10 +39,12 @@ defmodule MosquittoEmbed.Driver do
         port = :erlang.open_port({:spawn, @portname}, [:binary])
         true = :erlang.register(@portname, port)
         state = %{port: port, waiters: []}
+
         response = :erlang.port_call(port, @cmd_init, "")
         Logger.debug("control init #{inspect(response)}")
-        # response = :erlang.port_call(@portname, @cmd_open_client, "erlclient")
-        # Logger.debug("control open_client #{inspect(response)}")
+        
+        response = :erlang.port_call(@portname, @cmd_open_client, "erlclient")
+        Logger.debug("control open_client #{inspect(response)}")
         
         {:ok, state}
     end

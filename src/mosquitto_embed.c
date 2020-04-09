@@ -20,7 +20,7 @@
 
 #include "mosquitto_broker_internal.h"
 
-static char* get_s(const char* buf, int len);
+static int get_string(char *buf, ErlDrvSizeT len, int* index, char** s, ei_x_buff* x);
 
 static void encode_ok(ei_x_buff* x);
 static void encode_error(ei_x_buff* x);
@@ -38,22 +38,31 @@ static ErlDrvBinary* ei_x_to_new_binary(ei_x_buff* x);
 #define CMD_OPEN_CLIENT 3
 #define CMD_SUBSCRIBE 4
 
+struct mosquitto_embed_data_s;
+typedef struct mosquitto_embed_data_s mosquitto_embed_data;
 
 typedef struct {
   char* topic;
-  erlang_pid pid;
-  UT_hash_handle hh;
+  ErlDrvTermData pid;
+  ErlDrvTermData port;
+  ErlDrvMonitor monitor;
+  ei_x_buff user_data;
+  mosquitto_embed_data * d;
+
+  // Hash Lookup values
+  UT_hash_handle hh_topic;
+  UT_hash_handle hh_pid;
+  UT_hash_handle hh_monitor;
 } mosq_sub_t;
 
-typedef struct {
+struct mosquitto_embed_data_s {
   ErlDrvPort  port;
   struct mosquitto_db *db;
   mosq_sock_t *listensock;
   int listensock_count;
   int poll_period;
   struct mosquitto * mosq_context;
-} mosquitto_embed_data;
-
+};
 
 // This is needed for select_stop()
 static struct mosquitto_db *db;
@@ -180,18 +189,46 @@ static void subscribe_callback(
   struct mosquitto_msg_store *msg_store, 
   mosq_user_context_t user_context)
 {
+  mosq_sub_t * mosq_sub = (mosq_sub_t *)user_context;
   fprintf(stderr, "subscribe_callback\r\n");
   fprintf(stderr, "%s %s %i\r\n", topic, (char*)UHPA_ACCESS_PAYLOAD(msg_store), *(int*)user_context);
+
+  void * payload = UHPA_ACCESS_PAYLOAD(msg_store);
+  int payloadlen = msg_store->payloadlen;
+
+  ErlDrvTermData spec[] = {
+    ERL_DRV_BUF2BINARY, TERM_DATA(topic), TERM_DATA(strlen(topic)),
+    ERL_DRV_BUF2BINARY, TERM_DATA(payload), TERM_DATA(payloadlen),
+    ERL_DRV_EXT2TERM, TERM_DATA(mosq_sub->user_data.buff), TERM_DATA(mosq_sub->user_data.index),
+    ERL_DRV_TUPLE, 3,
+  };
+
+  int spec_len = sizeof(spec)/sizeof(ErlDrvTermData);
+  
+  erl_drv_send_term(
+    mosq_sub->port,
+    mosq_sub->pid,
+    spec,
+    spec_len);
+
 }
 
-static int cmd_init(char *args, mosquitto_embed_data* d, ei_x_buff* x)
+static int cmd_init(char *buf, ErlDrvSizeT len, int* index, mosquitto_embed_data* d, ei_x_buff* x)
 {
   int argc;
   char **argv;
+  char * args;
 
   fprintf(stderr, "\r\ninit\r\n");
 
+  if(get_string(buf, len, index, &args, x) < 0)
+  {
+    fprintf(stderr, "Unable to decode args");
+    goto exit_on_error;
+  }
+
   args_to_argv(args, &argc, &argv);
+  driver_free(args);
 
   fprintf(stderr, "args_to_argv\r\n");
   mosquitto_init(argc, argv);
@@ -214,23 +251,111 @@ static int cmd_init(char *args, mosquitto_embed_data* d, ei_x_buff* x)
 #endif
   d->poll_period = DEFAULT_POLL_PERIOD;
   driver_set_timer(d->port, d->poll_period);
-
-  d->mosq_context = mosquitto_plugin__create_context(db, "erlclient");
   
   encode_ok(x);
   return 0;
+  exit_on_error:
+    encode_error(x);
+    return 0;
 }
 
-static int cmd_subscribe(char *topic, erlang_pid* pid, mosquitto_embed_data* d, ei_x_buff* x)
+static int cmd_open_client(char *buf, ErlDrvSizeT len, int* index, mosquitto_embed_data* d, ei_x_buff* x)
 {
+  char * client_name;
+  if(get_string(buf, len, index, &client_name, x) < 0)
+  {
+    fprintf(stderr, "Unable to decode client_name");
+    goto exit_on_error;
+  }
+
+  fprintf(stderr, "client_name %s\r\n", client_name);
+  d->mosq_context = mosquitto_plugin__create_context(db, client_name);
+  driver_free(client_name);
+
   if(d->mosq_context != NULL)
   {
-    mosquitto_plugin__subscribe(db, d->mosq_context, topic, subscribe_callback, &my_context);
+    encode_ok(x);
+  }
+  else
+  {
+    encode_error(x);
+  }
+  
+  return 0;
+exit_on_error:
+  return -1;
+}
+
+static int cmd_subscribe(char *buf, ErlDrvSizeT len, int* index, mosquitto_embed_data* d, ei_x_buff* x)
+{
+  int term_size;
+  int term_type;
+  int user_data_index;
+  ErlDrvTermData caller_pid;
+  fprintf(stderr, "cmd_subscribe\r\n");
+
+  if (ei_decode_tuple_header(buf, index, &term_size) < 0)
+  {
+      ei_get_type(buf, index, &term_type, &term_size);
+      fprintf(stderr, "Expecting {topic, user_data} tuple - got %i %c %i\r\n", term_type, term_type, term_size);
+      encode_error(x);
+      goto exit_on_error;
+  }
+  if (term_size != 2)
+  {
+      fprintf(stderr, "Expecting 2-tuple, got %i \r\n", term_size);
+      encode_error(x);
+      goto exit_on_error;
+  }
+
+  char *topic = NULL;
+  if (get_string(buf, len, index, &topic, x) < 0)
+  {
+      fprintf(stderr, "Cannot decode Topic\r\n");
+      encode_error(x);
+      goto exit_on_error;
+  }
+  fprintf(stderr, "topic %s\r\b", topic);
+
+  user_data_index = *index;
+
+  if(ei_skip_term(buf, &user_data_index) < 0)
+  {
+      fprintf(stderr, "Cannot decode User Data\r\n");
+      encode_error(x);
+      goto exit_on_error;
+  }
+  fprintf(stderr, "driver_caller\r\n");
+  caller_pid = driver_caller(d->port);
+
+  mosq_sub_t * mosq_sub = driver_alloc(sizeof(mosq_sub_t));
+  ei_x_new_with_version(&(mosq_sub->user_data));
+
+  // Copy the user data over
+  fprintf(stderr, "ei_x_append_buf\r\n");
+  ei_x_append_buf(&(mosq_sub->user_data), &buf[*index], user_data_index-*index);
+
+  mosq_sub->d = d;
+  mosq_sub->pid = caller_pid;
+  mosq_sub->port = driver_mk_port(d->port);
+
+  if(d->mosq_context != NULL)
+  {
+    mosquitto_plugin__subscribe(db, d->mosq_context, topic, subscribe_callback, mosq_sub);
   }
   else
   {
     fprintf(stderr, "No Context\r\n");
   }
+  if(topic != NULL)
+  {
+    driver_free(topic);
+  }
+
+  encode_ok(x);
+  return 0;
+exit_on_error:
+  return -1;
 }
 
 static ErlDrvSSizeT call(ErlDrvData drv_data, unsigned int command, char *buf, ErlDrvSizeT len, char **rbuf, ErlDrvSizeT rlen,
@@ -239,54 +364,38 @@ static ErlDrvSSizeT call(ErlDrvData drv_data, unsigned int command, char *buf, E
   int nlen = -1;
   int r = -1;
   ei_x_buff x;
-  mosquitto_embed_data* data = (mosquitto_embed_data*)drv_data;
-  char* s;
-  int term_size;
-  int term_type;
+  mosquitto_embed_data* data = (mosquitto_embed_data*)drv_data; 
   int index = 0;
-  erlang_pid pid;
+  int ver;
+  
+
+  if(ei_decode_version(buf, &index, &ver) < 0)
+  {
+    fprintf(stderr, "cannot decode version\r\n");
+  }
+  else
+  {
+    fprintf(stderr, "Version %i\r\n", ver);
+  }
 
   ei_x_new_with_version(&x);
   switch (command) 
   {
     case CMD_ECHO: 
-        s = get_s(buf, len);
-        r = cmd_echo(s, data, &x);  
-        driver_free(s);
+        if (rlen < len) {
+            *rbuf = (void *)driver_alloc(len);
+        }
+        (void)memcpy(*rbuf, buf, len);
+        return (ErlDrvSSizeT)(len);
         break;
     case CMD_INIT:
-        s = get_s(buf, len);
-        r = cmd_init(s, data, &x);
-        driver_free(s);
+        r = cmd_init(buf, len, &index, data, &x);
+        break;
+    case CMD_OPEN_CLIENT:
+        r = cmd_open_client(buf, len, &index, data, &x);
         break;
     case CMD_SUBSCRIBE:
-        if (ei_decode_tuple_header(buf, &index, &term_size) < 0 || term_size != 2)
-        {
-            fprintf(stderr, "Expecting {topic, pid} tuple\r\n");
-            encode_error(&x);
-            goto exit_on_error;
-        }
-        if (ei_get_type(buf, &index, &term_type, &term_size) < 0 || term_type != ERL_BINARY_EXT)
-        {
-            fprintf(stderr, "Expecting topic as Binary\r\n");
-            encode_error(&x);
-            goto exit_on_error;
-        }
-        s = driver_alloc(term_size+1);
-        long topic_size;
-        if (ei_decode_binary(buf, &index, s, &topic_size) < 0)
-        {
-            fprintf(stderr, "Cannot decode Topic\r\n");
-            encode_error(&x);
-            goto exit_on_error;
-        }
-        if (ei_decode_pid(buf, &index, &pid) < 0)
-        {
-            fprintf(stderr, "Cannot decode PID\r\n");
-            encode_error(&x);
-            goto exit_on_error;
-        }   
-        r = cmd_subscribe(s, &pid, data, &x);
+        r = cmd_subscribe(buf, len, &index, data, &x);
         break;
       default:
         break;
@@ -390,17 +499,41 @@ static void process_exit(ErlDrvData handle, ErlDrvMonitor *monitor)
   unix driver would call close(event) */
 static void stop_select(ErlDrvEvent event, void* reserved)
 {
-  mosquitto__closesock(db, event2sock(event));
+    mosquitto__closesock(db, event2sock(event));
 }
 
-static char* get_s(const char* buf, int len)
+static int get_string(char *buf, ErlDrvSizeT len, int* index, char** s, ei_x_buff* x)
 {
-    char* result;
-    if (len < 1 || len > 10000) return NULL;
-    result = driver_alloc(len+1);
-    memcpy(result, buf, len);
-    result[len] = '\0';
-    return result;
+  
+  char * new_string = NULL;
+  int term_type = 0;
+  int term_size = 0;
+  
+  if (ei_get_type(buf, index, &term_type, &term_size) < 0 || term_type != ERL_BINARY_EXT)
+  {
+      fprintf(stderr, "Expecting topic as Binary\r\n");
+      encode_error(&x);
+      goto exit_on_error;
+  }
+  new_string = driver_alloc(term_size+1);
+
+  long s_size;
+  if (ei_decode_binary(buf, index, new_string, &s_size) < 0)
+  {
+      fprintf(stderr, "Cannot decode String\r\n");
+      encode_error(&x);
+      goto exit_on_error;
+  }
+  new_string[term_size] = '\0';
+
+  *s = new_string;  
+  return 0;
+exit_on_error:
+  if(new_string != NULL)
+  {
+    driver_free(*s);
+  }
+  return -1;
 }
 
 static void encode_ok(ei_x_buff* x)
