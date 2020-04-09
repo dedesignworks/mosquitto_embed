@@ -13,6 +13,9 @@
 
 #include "ei.h"
 #include "erl_driver.h"
+#include "memory_mosq.h"
+
+#define DEBUG(FMT, ...) fprintf(stderr, FMT "\r\n", ##__VA_ARGS__)
 
 #define event2sock(EV) ((int) ((long) (EV)))
 #define sock2event(FD) ((ErlDrvEvent) ((long) (FD)))
@@ -21,6 +24,7 @@
 #include "mosquitto_broker_internal.h"
 
 static int get_string(char *buf, ErlDrvSizeT len, int* index, char** s, ei_x_buff* x);
+static void args_to_argv(char * args,  int* argc, char*** argv);
 
 static void encode_ok(ei_x_buff* x);
 static void encode_error(ei_x_buff* x);
@@ -37,6 +41,7 @@ static ErlDrvBinary* ei_x_to_new_binary(ei_x_buff* x);
 #define CMD_POLL_PERIOD 2
 #define CMD_OPEN_CLIENT 3
 #define CMD_SUBSCRIBE 4
+#define CMD_UNSUBSCRIBE 5
 
 struct mosquitto_embed_data_s;
 typedef struct mosquitto_embed_data_s mosquitto_embed_data;
@@ -62,6 +67,9 @@ struct mosquitto_embed_data_s {
   int listensock_count;
   int poll_period;
   struct mosquitto * mosq_context;
+
+  mosq_sub_t * subs_by_topic;
+  mosq_sub_t * subs_by_monitor;
 };
 
 // This is needed for select_stop()
@@ -69,46 +77,21 @@ static struct mosquitto_db *db;
 
 static ErlDrvData start(ErlDrvPort port, char *buff)
 {
-  // char *portname = BLE_PORT;
-  // int fd = -1;
-
   //----------------------------------
   // Create the Erlang Driver Ptr
   //----------------------------------
   mosquitto_embed_data* d = (mosquitto_embed_data*)driver_alloc(sizeof(mosquitto_embed_data));
+  memset(d, 0, sizeof(mosquitto_embed_data));
+
   d->port = port;
   set_port_control_flags(port, PORT_CONTROL_FLAG_BINARY);
-  //----------------------------------
-  // Open the Serial Port (TTY)
-  //----------------------------------
-  // if((fd = open (portname, O_RDWR | O_NOCTTY)) < 0) {
-  //   goto exit_on_error;
-  // }
-
-
-  // d->serial_port = fd;
-
-  // Set up to receive notifications when the serial_port is ready to be "read"
-  //driver_select(d->port, (ErlDrvEvent)d->serial_port, ERL_DRV_READ,1);
 
   return (ErlDrvData)d;
-
-// exit_on_error:
-//   //Try to gracefully cleanup
-//   driver_free(d);
-
-//   if (fd != -1)
-//   {
-//     close(fd);
-//   }
-//   return ERL_DRV_ERROR_GENERAL;
 }
 
 static void stop(ErlDrvData handle)
 {
   mosquitto_embed_data* d = (mosquitto_embed_data*)handle;
-  // fprintf(stderr, "\r\nstop\r\n");
-  // driver_select(d->port, (ErlDrvEvent)d->serial_port, ERL_DRV_READ, 0);
 
   for(int i=0; i < d->listensock_count; i++)
   {
@@ -127,61 +110,6 @@ static int cmd_echo(char *s, mosquitto_embed_data* data, ei_x_buff* x)
   return 0;
 }
 
-static char* argc0 = "mosquitto";
-
-static void args_to_argv(char * args,  int* argc, char*** argv)
-{
-  
-  int count = 1;
-
-  fprintf(stderr, "args_to_argv %s\r\n", args);
-
-  if(args == NULL)
-  {
-    *argc=1;
-    char **v = (char**)driver_alloc(sizeof(char *));
-    v[0] = argc0;
-    *argv = v;
-    return;
-  }
-
-  for(int i =0; args[i] != '\0'; i++)
-  {
-    fprintf(stderr, "args_to_argv %d\r\n", i);
-    if(args[i] == ' ')
-    {
-      count = count + 1;
-    }
-  }
-  
-  int size = count * sizeof(char *);
-  char **v = (char**)driver_alloc(size);
-  fprintf(stderr, "driver_alloc %d\r\n", size);
-
-  // Note the args is already duplicated using get_s() so it is safe
-  // here to chop the string up
-  int j = 0;
-  v[j] = argc0;
-  j++;
-  for(int i =0; args[i] != '\0'; i++)
-  {
-    if(i == 0)
-    {
-      v[j] = &args[i];
-    }
-    else if(args[i] == ' ')
-    {
-      args[i] = '\0';
-      v[j++] = &args[i+1];
-    }
-  }
-
-  *argc = count;
-  *argv = v;
-}
-
-static int my_context = 42;
-
 static void subscribe_callback(
   struct mosquitto_db *db, 
   struct mosquitto *context, 
@@ -190,8 +118,8 @@ static void subscribe_callback(
   mosq_user_context_t user_context)
 {
   mosq_sub_t * mosq_sub = (mosq_sub_t *)user_context;
-  fprintf(stderr, "subscribe_callback\r\n");
-  fprintf(stderr, "%s %s %i\r\n", topic, (char*)UHPA_ACCESS_PAYLOAD(msg_store), *(int*)user_context);
+  DEBUG("subscribe_callback");
+  DEBUG("%s %s %i", topic, (char*)UHPA_ACCESS_PAYLOAD(msg_store), *(int*)user_context);
 
   void * payload = UHPA_ACCESS_PAYLOAD(msg_store);
   int payloadlen = msg_store->payloadlen;
@@ -219,27 +147,23 @@ static int cmd_init(char *buf, ErlDrvSizeT len, int* index, mosquitto_embed_data
   char **argv;
   char * args;
 
-  fprintf(stderr, "\r\ninit\r\n");
+  DEBUG("init");
 
   if(get_string(buf, len, index, &args, x) < 0)
   {
-    fprintf(stderr, "Unable to decode args");
+    DEBUG("Unable to decode args");
     goto exit_on_error;
   }
 
   args_to_argv(args, &argc, &argv);
   driver_free(args);
 
-  fprintf(stderr, "args_to_argv\r\n");
   mosquitto_init(argc, argv);
-  fprintf(stderr, "int_db\r\n");
   db = mosquitto__get_db();
-  fprintf(stderr, "mosquitto__get_listensock\r\n");
   mosquitto__get_listensock(&(d->listensock), &(d->listensock_count));
 
   d->db = db;
 
-  fprintf(stderr, "driver_select\r\n");
   for(int i=0; i < d->listensock_count; i++)
   {
     driver_select(d->port, sock2event(d->listensock[i]), ERL_DRV_READ,1);
@@ -264,11 +188,11 @@ static int cmd_open_client(char *buf, ErlDrvSizeT len, int* index, mosquitto_emb
   char * client_name;
   if(get_string(buf, len, index, &client_name, x) < 0)
   {
-    fprintf(stderr, "Unable to decode client_name");
+    DEBUG("Unable to decode client_name");
     goto exit_on_error;
   }
 
-  fprintf(stderr, "client_name %s\r\n", client_name);
+  DEBUG("client_name %s", client_name);
   d->mosq_context = mosquitto_plugin__create_context(db, client_name);
   driver_free(client_name);
 
@@ -292,18 +216,18 @@ static int cmd_subscribe(char *buf, ErlDrvSizeT len, int* index, mosquitto_embed
   int term_type;
   int user_data_index;
   ErlDrvTermData caller_pid;
-  fprintf(stderr, "cmd_subscribe\r\n");
+  DEBUG("cmd_subscribe");
 
   if (ei_decode_tuple_header(buf, index, &term_size) < 0)
   {
       ei_get_type(buf, index, &term_type, &term_size);
-      fprintf(stderr, "Expecting {topic, user_data} tuple - got %i %c %i\r\n", term_type, term_type, term_size);
+      DEBUG("Expecting {topic, user_data} tuple - got %i %c %i", term_type, term_type, term_size);
       encode_error(x);
       goto exit_on_error;
   }
   if (term_size != 2)
   {
-      fprintf(stderr, "Expecting 2-tuple, got %i \r\n", term_size);
+      DEBUG("Expecting 2-tuple, got %i", term_size);
       encode_error(x);
       goto exit_on_error;
   }
@@ -311,41 +235,52 @@ static int cmd_subscribe(char *buf, ErlDrvSizeT len, int* index, mosquitto_embed
   char *topic = NULL;
   if (get_string(buf, len, index, &topic, x) < 0)
   {
-      fprintf(stderr, "Cannot decode Topic\r\n");
+      DEBUG("Cannot decode Topic");
       encode_error(x);
       goto exit_on_error;
   }
-  fprintf(stderr, "topic %s\r\b", topic);
+  DEBUG("topic %s", topic);
 
   user_data_index = *index;
 
   if(ei_skip_term(buf, &user_data_index) < 0)
   {
-      fprintf(stderr, "Cannot decode User Data\r\n");
+      DEBUG("Cannot decode User Data");
       encode_error(x);
       goto exit_on_error;
   }
-  fprintf(stderr, "driver_caller\r\n");
+  DEBUG("driver_caller");
   caller_pid = driver_caller(d->port);
 
   mosq_sub_t * mosq_sub = driver_alloc(sizeof(mosq_sub_t));
   ei_x_new_with_version(&(mosq_sub->user_data));
 
   // Copy the user data over
-  fprintf(stderr, "ei_x_append_buf\r\n");
+  DEBUG("ei_x_append_buf");
   ei_x_append_buf(&(mosq_sub->user_data), &buf[*index], user_data_index-*index);
 
   mosq_sub->d = d;
+  mosq_sub->topic = topic;
   mosq_sub->pid = caller_pid;
   mosq_sub->port = driver_mk_port(d->port);
 
   if(d->mosq_context != NULL)
   {
+    mosq_sub_t * old_sub = NULL;
+    // Remove any existing subscription for this topic
+    HASH_FIND(hh_topic, d->subs_by_topic, topic, strlen(topic), old_sub);
+    if(old_sub != NULL)
+    {
+      mosquitto_plugin__unsubscribe(db, d->mosq_context, topic);
+      HASH_DELETE(hh_topic, d->subs_by_topic, old_sub);
+    }
+    
     mosquitto_plugin__subscribe(db, d->mosq_context, topic, subscribe_callback, mosq_sub);
+    HASH_ADD_KEYPTR(hh_topic, d->subs_by_topic, topic, strlen(topic), mosq_sub);
   }
   else
   {
-    fprintf(stderr, "No Context\r\n");
+    DEBUG("No Context");
   }
   if(topic != NULL)
   {
@@ -357,6 +292,45 @@ static int cmd_subscribe(char *buf, ErlDrvSizeT len, int* index, mosquitto_embed
 exit_on_error:
   return -1;
 }
+
+static int cmd_unsubscribe(char *buf, ErlDrvSizeT len, int* index, mosquitto_embed_data* d, ei_x_buff* x)
+{
+  DEBUG("cmd_unsubscribe");
+
+  char *topic = NULL;
+  if (get_string(buf, len, index, &topic, x) < 0)
+  {
+      DEBUG("Cannot decode Topic");
+      encode_error(x);
+      goto exit_on_error;
+  }
+  DEBUG("topic %s", topic);
+
+  mosq_sub_t * old_sub = NULL;
+  // Remove any existing subscription for this topic
+  HASH_FIND(hh_topic, d->subs_by_topic, topic, strlen(topic), old_sub);
+  if(old_sub != NULL)
+  {
+    DEBUG("found %s", topic);
+    mosquitto_plugin__unsubscribe(db, d->mosq_context, topic);
+    HASH_DELETE(hh_topic, d->subs_by_topic, old_sub);
+    encode_ok(x);
+  }
+  else
+  {
+    DEBUG("cannot find %s", topic);
+    encode_error(x);
+  }
+  
+  if(topic != NULL)
+  {
+    driver_free(topic);
+  }
+
+exit_on_error:  
+  return 0;
+}
+
 
 static ErlDrvSSizeT call(ErlDrvData drv_data, unsigned int command, char *buf, ErlDrvSizeT len, char **rbuf, ErlDrvSizeT rlen,
                  unsigned int *flags)
@@ -371,11 +345,11 @@ static ErlDrvSSizeT call(ErlDrvData drv_data, unsigned int command, char *buf, E
 
   if(ei_decode_version(buf, &index, &ver) < 0)
   {
-    fprintf(stderr, "cannot decode version\r\n");
+    DEBUG("cannot decode version");
   }
   else
   {
-    fprintf(stderr, "Version %i\r\n", ver);
+    DEBUG("Version %i", ver);
   }
 
   ei_x_new_with_version(&x);
@@ -397,7 +371,10 @@ static ErlDrvSSizeT call(ErlDrvData drv_data, unsigned int command, char *buf, E
     case CMD_SUBSCRIBE:
         r = cmd_subscribe(buf, len, &index, data, &x);
         break;
-      default:
+    case CMD_UNSUBSCRIBE:
+        r = cmd_unsubscribe(buf, len, &index, data, &x);
+        break;
+    default:
         break;
   }
 
@@ -442,14 +419,14 @@ static void handle_erl_msg(ErlDrvData handle, char *buff,
 static void on_write_block(struct mosquitto * mosq_context, mosq_sock_t sock, mosq_user_context_t context)
 {
   mosquitto_embed_data *d = (mosquitto_embed_data*)context;
-  fprintf(stderr, "on_write_block\r\n");
+  DEBUG("on_write_block");
   driver_select(d->port, sock2event(sock), ERL_DRV_WRITE, 1);
 }
 
 static void on_socket_accept(struct mosquitto * mosq_context, mosq_sock_t sock, void* context)
 {
   mosquitto_embed_data *d = (mosquitto_embed_data*)context;
-  fprintf(stderr, "on_socket_accept\r\n");
+  DEBUG("on_socket_accept");
 
   mosquitto__on_write_block(mosq_context, on_write_block, d);
 
@@ -460,7 +437,7 @@ static void on_socket_accept(struct mosquitto * mosq_context, mosq_sock_t sock, 
 static void handle_socket_input(ErlDrvData handle, ErlDrvEvent event)
 {
   mosquitto_embed_data *d = (mosquitto_embed_data*)handle;
-  // fprintf(stderr, "handle_socket_input\r\n");
+  // DEBUG("handle_socket_input");
 
   mosquitto__readsock(d->db,event2sock(event), on_socket_accept, d);
   
@@ -473,7 +450,7 @@ static void handle_socket_input(ErlDrvData handle, ErlDrvEvent event)
 static void handle_socket_output(ErlDrvData handle, ErlDrvEvent event)
 {
   mosquitto_embed_data *d = (mosquitto_embed_data*)handle;
-  // fprintf(stderr, "handle_socket_output\r\n");
+  // DEBUG("handle_socket_output");
 
   // Disable socket notfications here as mosquitto__writesock() might need to enable them
   driver_select(d->port, sock2event(event), ERL_DRV_WRITE, 0);
@@ -511,7 +488,7 @@ static int get_string(char *buf, ErlDrvSizeT len, int* index, char** s, ei_x_buf
   
   if (ei_get_type(buf, index, &term_type, &term_size) < 0 || term_type != ERL_BINARY_EXT)
   {
-      fprintf(stderr, "Expecting topic as Binary\r\n");
+      DEBUG("Expecting topic as Binary");
       encode_error(&x);
       goto exit_on_error;
   }
@@ -520,7 +497,7 @@ static int get_string(char *buf, ErlDrvSizeT len, int* index, char** s, ei_x_buf
   long s_size;
   if (ei_decode_binary(buf, index, new_string, &s_size) < 0)
   {
-      fprintf(stderr, "Cannot decode String\r\n");
+      DEBUG("Cannot decode String");
       encode_error(&x);
       goto exit_on_error;
   }
@@ -534,6 +511,59 @@ exit_on_error:
     driver_free(*s);
   }
   return -1;
+}
+
+static char* argc0 = "mosquitto";
+
+static void args_to_argv(char * args,  int* argc, char*** argv)
+{
+  
+  int count = 1;
+
+  DEBUG("args_to_argv %s", args);
+
+  if(args == NULL)
+  {
+    *argc=1;
+    char **v = (char**)driver_alloc(sizeof(char *));
+    v[0] = argc0;
+    *argv = v;
+    return;
+  }
+
+  for(int i =0; args[i] != '\0'; i++)
+  {
+    DEBUG("args_to_argv %d", i);
+    if(args[i] == ' ')
+    {
+      count = count + 1;
+    }
+  }
+  
+  int size = count * sizeof(char *);
+  char **v = (char**)driver_alloc(size);
+  DEBUG("driver_alloc %d", size);
+
+  // Note the args is already duplicated using get_s() so it is safe
+  // here to chop the string up
+  int j = 0;
+  v[j] = argc0;
+  j++;
+  for(int i =0; args[i] != '\0'; i++)
+  {
+    if(i == 0)
+    {
+      v[j] = &args[i];
+    }
+    else if(args[i] == ' ')
+    {
+      args[i] = '\0';
+      v[j++] = &args[i+1];
+    }
+  }
+
+  *argc = count;
+  *argv = v;
 }
 
 static void encode_ok(ei_x_buff* x)

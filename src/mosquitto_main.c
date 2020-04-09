@@ -642,8 +642,6 @@ struct mosquitto * mosquitto_plugin__create_context(struct mosquitto_db *db, cha
 	struct mosquitto *context;
 	char* context_id = mosquitto__strdup(client_id);
 
-	
-	// int dummysock = socket(AF_UNIX, SOCK_STREAM, 0);
 	context = context__init(db, -1);
 	context->id = context_id;
 
@@ -653,7 +651,7 @@ struct mosquitto * mosquitto_plugin__create_context(struct mosquitto_db *db, cha
 	return context;
 }
 
-void mosquitto_plugin__subscribe(
+int mosquitto_plugin__subscribe(
 	struct mosquitto_db *db, 
 	struct mosquitto * mosq_context, 
 	char *sub, 
@@ -661,13 +659,24 @@ void mosquitto_plugin__subscribe(
 	mosq_user_context_t user_context)
 {
 	int rc = 0;
-	int rc2;
 	uint8_t subscription_options = MQTT_SUB_OPT_SEND_RETAIN_ALWAYS;
 	uint32_t subscription_identifier = 0;
 	uint8_t qos;
 
-	rc2 = sub__add_plugin(db, mosq_context, sub, qos, subscription_identifier, subscription_options, &db->subs, subscribe_callback, user_context);
+	rc = sub__add_plugin(db, mosq_context, sub, qos, subscription_identifier, subscription_options, &db->subs, subscribe_callback, user_context);
 	sub__retain_queue(db, mosq_context, sub, qos, subscription_identifier);
+
+	return rc;
+}
+//
+
+int mosquitto_plugin__unsubscribe(
+	struct mosquitto_db *db, 
+	struct mosquitto * mosq_context, 
+	char *sub)
+{
+	uint8_t reason;
+	return sub__remove(db, mosq_context, sub, db->subs, &reason);
 }
 
 void mosquitto__unsubscribe()

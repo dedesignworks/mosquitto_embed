@@ -29,6 +29,6 @@ void mosquitto__loop_step(struct mosquitto_db *db);
 
 // Plugin API
 struct mosquitto * mosquitto_plugin__create_context(struct mosquitto_db *db, char* client_id);
-void mosquitto_plugin__subscribe(struct mosquitto_db *db, struct mosquitto * mosq_context, char *sub, mosq_subscribe_callback subscribe_callback, mosq_user_context_t user_context);
-
+int mosquitto_plugin__subscribe(struct mosquitto_db *db, struct mosquitto * mosq_context, char *sub, mosq_subscribe_callback subscribe_callback, mosq_user_context_t user_context);
+int mosquitto_plugin__unsubscribe(struct mosquitto_db *db, struct mosquitto * mosq_context, char *sub);
 #endif /* MOSQUITTO_EMBED_H */

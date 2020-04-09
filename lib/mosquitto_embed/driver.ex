@@ -8,6 +8,7 @@ defmodule MosquittoEmbed.Driver do
     @cmd_poll_period 2
     @cmd_open_client 3
     @cmd_subscribe 4
+    @cmd_unsubscribe 5
 
     @servername __MODULE__
     @portname_string 'mosquitto_embed'
@@ -23,6 +24,10 @@ defmodule MosquittoEmbed.Driver do
 
     def subscribe(topic, user_data) do
         :erlang.port_call(@portname, @cmd_subscribe, {topic, user_data})
+    end
+
+    def unsubscribe(topic) do
+        :erlang.port_call(@portname, @cmd_unsubscribe, topic)
     end
 
     def init(args) do
