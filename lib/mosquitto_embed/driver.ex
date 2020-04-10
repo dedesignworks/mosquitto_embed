@@ -9,6 +9,7 @@ defmodule MosquittoEmbed.Driver do
     @cmd_open_client 3
     @cmd_subscribe 4
     @cmd_unsubscribe 5
+    @cmd_publish 6
 
     @servername __MODULE__
     @portname_string 'mosquitto_embed'
@@ -28,6 +29,10 @@ defmodule MosquittoEmbed.Driver do
 
     def unsubscribe(topic) do
         :erlang.port_call(@portname, @cmd_unsubscribe, topic)
+    end
+
+    def publish(topic, payload, retain \\ false, qos \\ 0) do
+        :erlang.port_call(@portname, @cmd_publish, {topic, payload, retain, qos})
     end
 
     def init(args) do
@@ -67,10 +72,10 @@ defmodule MosquittoEmbed.Driver do
     #     {:noreply, %{state | waiters: waiters ++ [from] }}
     # end
 
-    # def handle_info(:stop, state = %{port: port}) do
-    #     :erlang.port_close(port)
-    #     {:noreply, state}
-    # end
+    def handle_info(:stop, state = %{port: port}) do
+        :erlang.port_close(port)
+        {:noreply, state}
+    end
 
     # def handle_info({port,{:data,data}}, state = %{port: port, waiters: [waiter | waiters]}) do
     #     Logger.debug("Data: #{inspect(data)}")

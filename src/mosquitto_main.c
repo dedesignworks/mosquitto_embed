@@ -58,6 +58,7 @@ Contributors:
 #include "misc_mosq.h"
 #include "util_mosq.h"
 #include "packet_mosq.h"
+#include "send_mosq.h"
 
 #include "mqtt_protocol.h"
 #include "mosquitto_embed.h"
@@ -679,10 +680,71 @@ int mosquitto_plugin__unsubscribe(
 	return sub__remove(db, mosq_context, sub, db->subs, &reason);
 }
 
-void mosquitto__unsubscribe()
+int mosquitto_plugin__publish(
+	struct mosquitto_db *db, 
+	struct mosquitto *mosq_context,
+	uint16_t mid,
+	char *topic, 
+	int qos, 
+	uint32_t payloadlen, 
+	uint8_t * payload_ptr,
+	int retain, 
+	uint32_t message_expiry_interval,
+	mosquitto_property *msg_properties)
 {
+	uint8_t dup = 0;
+	int rc = 0;
+	int rc2 = 0;
+	int res = 0;
+	struct mosquitto_msg_store *stored = NULL;
+	mosquitto__payload_uhpa payload;
+	char * db_topic = mosquitto__strdup(topic);
 
+	if(UHPA_ALLOC(payload, payloadlen) == 0){
+		return -1;
+	}
+	memcpy(UHPA_ACCESS(payload, payloadlen), payload_ptr, payloadlen);
+
+	if(db__message_store(db, mosq_context, mid, db_topic, qos, payloadlen, &payload, retain, &stored, message_expiry_interval, msg_properties, 0, mosq_mo_client)){
+		mosquitto_property_free_all(&msg_properties);
+		return 1;
+	}
+
+	switch(qos){
+		case 0:
+			rc2 = sub__messages_queue(db, mosq_context->id, db_topic, qos, retain, &stored);
+			if(rc2 > 0) rc = 1;
+			break;
+		case 1:
+			util__decrement_receive_quota(mosq_context);
+			rc2 = sub__messages_queue(db, mosq_context->id, db_topic, qos, retain, &stored);
+			if(rc2 == MOSQ_ERR_SUCCESS || mosq_context->protocol != mosq_p_mqtt5){
+				if(send__puback(mosq_context, mid, 0)) rc = 1;
+			}else if(rc2 == MOSQ_ERR_NO_SUBSCRIBERS){
+				if(send__puback(mosq_context, mid, MQTT_RC_NO_MATCHING_SUBSCRIBERS)) rc = 1;
+			}else{
+				rc = rc2;
+			}
+			break;
+		case 2:
+			if(dup == 0){
+				res = db__message_insert(db, mosq_context, mid, mosq_md_in, qos, retain, stored, NULL);
+			}else{
+				res = 0;
+			}
+			/* db__message_insert() returns 2 to indicate dropped message
+			 * due to queue. This isn't an error so don't disconnect them. */
+			if(!res){
+				if(send__pubrec(mosq_context, mid, 0)) rc = 1;
+			}else if(res == 1){
+				rc = 1;
+			}
+			break;
+	}
+
+	return rc;
 }
+
 #ifdef WIN32
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
 {

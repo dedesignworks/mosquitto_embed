@@ -14,6 +14,7 @@
 #include "ei.h"
 #include "erl_driver.h"
 #include "memory_mosq.h"
+#include "putget.h"
 
 #define DEBUG(FMT, ...) fprintf(stderr, FMT "\r\n", ##__VA_ARGS__)
 
@@ -42,6 +43,7 @@ static ErlDrvBinary* ei_x_to_new_binary(ei_x_buff* x);
 #define CMD_OPEN_CLIENT 3
 #define CMD_SUBSCRIBE 4
 #define CMD_UNSUBSCRIBE 5
+#define CMD_PUBLISH 6
 
 struct mosquitto_embed_data_s;
 typedef struct mosquitto_embed_data_s mosquitto_embed_data;
@@ -67,6 +69,7 @@ struct mosquitto_embed_data_s {
   int listensock_count;
   int poll_period;
   struct mosquitto * mosq_context;
+  int publish_num;
 
   mosq_sub_t * subs_by_topic;
   mosq_sub_t * subs_by_monitor;
@@ -271,6 +274,7 @@ static int cmd_subscribe(char *buf, ErlDrvSizeT len, int* index, mosquitto_embed
     HASH_FIND(hh_topic, d->subs_by_topic, topic, strlen(topic), old_sub);
     if(old_sub != NULL)
     {
+      DEBUG("old_sub");
       mosquitto_plugin__unsubscribe(db, d->mosq_context, topic);
       HASH_DELETE(hh_topic, d->subs_by_topic, old_sub);
     }
@@ -331,6 +335,89 @@ exit_on_error:
   return 0;
 }
 
+static int cmd_publish(char *buf, ErlDrvSizeT len, int* index, mosquitto_embed_data* d, ei_x_buff* x)
+{
+  int term_size;
+  int term_type;
+  int user_data_index;
+  ErlDrvTermData caller_pid;
+  uint32_t message_expiry_interval = 0;
+
+  int qos = 0;
+  int retain = 0;
+  mosquitto_property *msg_properties = NULL;
+
+  DEBUG("cmd_publish");
+
+  if (ei_decode_tuple_header(buf, index, &term_size) < 0)
+  {
+      ei_get_type(buf, index, &term_type, &term_size);
+      DEBUG("Expecting {topic, payoad} tuple - got %i %c %i", term_type, term_type, term_size);
+      encode_error(x);
+      goto exit_on_error;
+  }
+  if (term_size < 2)
+  {
+      DEBUG("Expecting 2+-tuple, got %i", term_size);
+      encode_error(x);
+      goto exit_on_error;
+  }
+
+  char *topic = NULL;
+  if (get_string(buf, len, index, &topic, x) < 0)
+  {
+      DEBUG("Cannot decode Topic");
+      encode_error(x);
+      goto exit_on_error;
+  }
+  DEBUG("topic %s", topic);
+
+  // Manually decode the payload binary to avoid an extra memcpy
+  const char *payload_ptr = buf + *index;
+
+  if (get8(payload_ptr) != ERL_BINARY_EXT)
+  {
+      DEBUG("Expecting payload as Binary");
+      encode_error(x);
+      goto exit_on_error;
+  }
+
+  uint32_t payloadlen = get32be(payload_ptr);
+  // payload_ptr now points to the payload itself
+
+  mosquitto_property_add_string(&msg_properties, MQTT_PROP_CONTENT_TYPE, "application/json");
+
+  if(d->mosq_context != NULL)
+  {
+    
+    mosquitto_plugin__publish(
+      d->db, 
+      d->mosq_context,
+      d->publish_num++,
+      topic,
+      qos,
+      payloadlen,
+      payload_ptr,
+      retain,
+      message_expiry_interval,
+      msg_properties
+      );
+  }
+  else
+  {
+    DEBUG("No Context");
+  }
+  if(topic != NULL)
+  {
+    driver_free(topic);
+  }
+
+  encode_ok(x);
+  return 0;
+exit_on_error:
+  return -1;
+}
+
 
 static ErlDrvSSizeT call(ErlDrvData drv_data, unsigned int command, char *buf, ErlDrvSizeT len, char **rbuf, ErlDrvSizeT rlen,
                  unsigned int *flags)
@@ -373,6 +460,9 @@ static ErlDrvSSizeT call(ErlDrvData drv_data, unsigned int command, char *buf, E
         break;
     case CMD_UNSUBSCRIBE:
         r = cmd_unsubscribe(buf, len, &index, data, &x);
+        break;
+    case CMD_PUBLISH:
+        r = cmd_publish(buf, len, &index, data, &x);
         break;
     default:
         break;
@@ -489,7 +579,7 @@ static int get_string(char *buf, ErlDrvSizeT len, int* index, char** s, ei_x_buf
   if (ei_get_type(buf, index, &term_type, &term_size) < 0 || term_type != ERL_BINARY_EXT)
   {
       DEBUG("Expecting topic as Binary");
-      encode_error(&x);
+      encode_error(x);
       goto exit_on_error;
   }
   new_string = driver_alloc(term_size+1);
@@ -498,7 +588,7 @@ static int get_string(char *buf, ErlDrvSizeT len, int* index, char** s, ei_x_buf
   if (ei_decode_binary(buf, index, new_string, &s_size) < 0)
   {
       DEBUG("Cannot decode String");
-      encode_error(&x);
+      encode_error(x);
       goto exit_on_error;
   }
   new_string[term_size] = '\0';

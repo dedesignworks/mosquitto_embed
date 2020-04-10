@@ -2,6 +2,7 @@
 #define MOSQUITTO_EMBED_H
 
 #include "mosquitto_broker_internal.h"
+#include "mqtt_protocol.h"
 
 
 typedef void * mosq_user_context_t;
@@ -31,4 +32,26 @@ void mosquitto__loop_step(struct mosquitto_db *db);
 struct mosquitto * mosquitto_plugin__create_context(struct mosquitto_db *db, char* client_id);
 int mosquitto_plugin__subscribe(struct mosquitto_db *db, struct mosquitto * mosq_context, char *sub, mosq_subscribe_callback subscribe_callback, mosq_user_context_t user_context);
 int mosquitto_plugin__unsubscribe(struct mosquitto_db *db, struct mosquitto * mosq_context, char *sub);
+int mosquitto_plugin__publish(
+	struct mosquitto_db *db, 
+	struct mosquitto *mosq_context,
+	uint16_t mid,
+	char *topic, 
+	int qos, 
+	uint32_t payloadlen, 
+	uint8_t * payload_ptr,
+	int retain, 
+	uint32_t message_expiry_interval,
+	mosquitto_property *msg_properties);
+
+// see mosquitto_property_add_* in mosquitto.h
+// MQTT_PROP_PAYLOAD_FORMAT_INDICATOR = 1,		/* Byte :				PUBLISH, Will Properties */
+// MQTT_PROP_MESSAGE_EXPIRY_INTERVAL = 2,		/* 4 byte int :			PUBLISH, Will Properties */
+// MQTT_PROP_CONTENT_TYPE = 3,					/* UTF-8 string :		PUBLISH, Will Properties */
+// MQTT_PROP_RESPONSE_TOPIC = 8,				/* UTF-8 string :		PUBLISH, Will Properties */
+// MQTT_PROP_CORRELATION_DATA = 9,				/* Binary Data :		PUBLISH, Will Properties */
+// MQTT_PROP_SUBSCRIPTION_IDENTIFIER = 11,		/* Variable byte int :	PUBLISH, SUBSCRIBE */
+// MQTT_PROP_TOPIC_ALIAS = 35,					/* 2 byte int :			PUBLISH */
+
+
 #endif /* MOSQUITTO_EMBED_H */
