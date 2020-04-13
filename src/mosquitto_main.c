@@ -644,6 +644,7 @@ struct mosquitto * mosquitto_plugin__create_context(struct mosquitto_db *db, cha
 	char* context_id = mosquitto__strdup(client_id);
 
 	context = context__init(db, -1);
+	context->sock = socket(AF_UNIX, SOCK_STREAM, 0);
 	context->id = context_id;
 
 	HASH_ADD_KEYPTR(hh_id, db->contexts_by_id, context->id, strlen(context->id), context);
@@ -665,7 +666,7 @@ int mosquitto_plugin__subscribe(
 	uint8_t qos;
 
 	rc = sub__add_plugin(db, mosq_context, sub, qos, subscription_identifier, subscription_options, &db->subs, subscribe_callback, user_context);
-	sub__retain_queue(db, mosq_context, sub, qos, subscription_identifier);
+	int rc2 = sub__retain_queue_plugin(db, mosq_context, sub, qos, subscription_identifier, subscribe_callback, user_context);
 
 	return rc;
 }
@@ -683,7 +684,6 @@ int mosquitto_plugin__unsubscribe(
 int mosquitto_plugin__publish(
 	struct mosquitto_db *db, 
 	struct mosquitto *mosq_context,
-	uint16_t mid,
 	char *topic, 
 	int qos, 
 	uint32_t payloadlen, 
@@ -696,6 +696,7 @@ int mosquitto_plugin__publish(
 	int rc = 0;
 	int rc2 = 0;
 	int res = 0;
+	uint16_t mid = mosquitto__mid_generate(mosq_context);
 	struct mosquitto_msg_store *stored = NULL;
 	mosquitto__payload_uhpa payload;
 	char * db_topic = mosquitto__strdup(topic);

@@ -69,7 +69,6 @@ struct mosquitto_embed_data_s {
   int listensock_count;
   int poll_period;
   struct mosquitto * mosq_context;
-  int publish_num;
 
   mosq_sub_t * subs_by_topic;
   mosq_sub_t * subs_by_monitor;
@@ -113,7 +112,7 @@ static int cmd_echo(char *s, mosquitto_embed_data* data, ei_x_buff* x)
   return 0;
 }
 
-static void subscribe_callback(
+static int subscribe_callback(
   struct mosquitto_db *db, 
   struct mosquitto *context, 
   const char *topic, 
@@ -142,6 +141,7 @@ static void subscribe_callback(
     spec,
     spec_len);
 
+  return 0;
 }
 
 static int cmd_init(char *buf, ErlDrvSizeT len, int* index, mosquitto_embed_data* d, ei_x_buff* x)
@@ -374,7 +374,7 @@ static int cmd_publish(char *buf, ErlDrvSizeT len, int* index, mosquitto_embed_d
 
   // Manually decode the payload binary to avoid an extra memcpy
   const char *payload_ptr = buf + *index;
-
+  ei_skip_term(buf, index);
   if (get8(payload_ptr) != ERL_BINARY_EXT)
   {
       DEBUG("Expecting payload as Binary");
@@ -393,7 +393,6 @@ static int cmd_publish(char *buf, ErlDrvSizeT len, int* index, mosquitto_embed_d
     mosquitto_plugin__publish(
       d->db, 
       d->mosq_context,
-      d->publish_num++,
       topic,
       qos,
       payloadlen,

@@ -35,7 +35,6 @@ int mosquitto_plugin__unsubscribe(struct mosquitto_db *db, struct mosquitto * mo
 int mosquitto_plugin__publish(
 	struct mosquitto_db *db, 
 	struct mosquitto *mosq_context,
-	uint16_t mid,
 	char *topic, 
 	int qos, 
 	uint32_t payloadlen, 
