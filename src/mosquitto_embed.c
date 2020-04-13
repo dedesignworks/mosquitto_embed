@@ -16,7 +16,12 @@
 #include "memory_mosq.h"
 #include "putget.h"
 
+// #define __DEBUGGING__
+#ifdef __DEBUGGING__
 #define DEBUG(FMT, ...) fprintf(stderr, FMT "\r\n", ##__VA_ARGS__)
+#else
+#define DEBUG(FMT, ...)
+#endif
 
 #define event2sock(EV) ((int) ((long) (EV)))
 #define sock2event(FD) ((ErlDrvEvent) ((long) (FD)))
@@ -166,9 +171,9 @@ static int cmd_init(char *buf, ErlDrvSizeT len, int* index, mosquitto_embed_data
   }
 
   args_to_argv(args, &argc, &argv);
-  driver_free(args);
-
+  
   mosquitto_init(argc, argv);
+  driver_free(args);
   db = mosquitto__get_db();
   mosquitto__get_listensock(&(d->listensock), &(d->listensock_count));
 
@@ -672,15 +677,17 @@ static void args_to_argv(char * args,  int* argc, char*** argv)
     return;
   }
 
-  for(int i =0; args[i] != '\0'; i++)
+  for(int i=0; args[i] != '\0'; i++)
   {
-    DEBUG("args_to_argv %d", i);
+    DEBUG("args_to_argv %d %c", i, args[i]);
     if(args[i] == ' ')
     {
       count = count + 1;
     }
   }
+  count++;
   
+  DEBUG("argsc %i", count);
   int size = count * sizeof(char *);
   char **v = (char**)driver_alloc(size);
   DEBUG("driver_alloc %d", size);
@@ -690,11 +697,11 @@ static void args_to_argv(char * args,  int* argc, char*** argv)
   int j = 0;
   v[j] = argc0;
   j++;
-  for(int i =0; args[i] != '\0'; i++)
+    for(int i =0; args[i] != '\0'; i++)
   {
     if(i == 0)
     {
-      v[j] = &args[i];
+      v[j++] = &args[i];
     }
     else if(args[i] == ' ')
     {
@@ -702,6 +709,13 @@ static void args_to_argv(char * args,  int* argc, char*** argv)
       v[j++] = &args[i+1];
     }
   }
+
+  #ifdef __DEBUGGING__
+    for(int i = 0; i < count; i++)
+    {
+      DEBUG("ARGV %i %s", i, v[i]);
+    }
+  #endif
 
   *argc = count;
   *argv = v;

@@ -15,12 +15,10 @@ defmodule MosquittoEmbed.Driver do
     @portname_string 'mosquitto_embed'
     @portname :mosquitto_embed
 
+    @default_args ""
+
     def start_link(args \\ []) do
         GenServer.start_link(__MODULE__, args, name: @servername)
-    end
-
-    def hello(msg) do
-        :erlang.port_call(@portname, @cmd_echo, msg)
     end
 
     def subscribe(topic, user_data) do
@@ -35,7 +33,17 @@ defmodule MosquittoEmbed.Driver do
         :erlang.port_call(@portname, @cmd_publish, {topic, payload, retain, qos})
     end
 
-    def init(args) do
+    def init([]) do
+       args =
+            case Application.get_env(:mosquitto_embed, :args) do
+                nil -> @default_args
+                args -> args
+            end
+        init([args])
+    end
+
+    def init([args]) do
+    
         # Make sure the driver is loaded 
         # (ignore any error if it already is)
         port_path = :code.priv_dir(:mosquitto_embed)
@@ -50,7 +58,7 @@ defmodule MosquittoEmbed.Driver do
         true = :erlang.register(@portname, port)
         state = %{port: port, waiters: []}
 
-        response = :erlang.port_call(port, @cmd_init, "")
+        response = :erlang.port_call(port, @cmd_init, args)
         Logger.debug("control init #{inspect(response)}")
         
         response = :erlang.port_call(@portname, @cmd_open_client, "erlclient")
