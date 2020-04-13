@@ -34,6 +34,11 @@ static ErlDrvBinary* ei_x_to_new_binary(ei_x_buff* x);
 
 #include "mosquitto_embed.h"
 
+// The Monitor structure is actually 
+// ERTS_REF_THING_SIZE*sizeof(Eterm))
+// There is uninitialized junk at the end that cannot be part of the hash
+#define MONTIOR_SIZE (3*sizeof(ErlDrvUInt))
+
 //----------------------------------
 // Defines must be in sync with mosquitto_embed.ex
 //----------------------------------
@@ -58,9 +63,10 @@ typedef struct {
 
   // Hash Lookup values
   UT_hash_handle hh_topic;
-  UT_hash_handle hh_pid;
   UT_hash_handle hh_monitor;
 } mosq_sub_t;
+
+static void free_sub(mosquitto_embed_data* d, mosq_sub_t * sub);
 
 struct mosquitto_embed_data_s {
   ErlDrvPort  port;
@@ -277,19 +283,21 @@ static int cmd_subscribe(char *buf, ErlDrvSizeT len, int* index, mosquitto_embed
     {
       DEBUG("old_sub");
       mosquitto_plugin__unsubscribe(db, d->mosq_context, topic);
-      HASH_DELETE(hh_topic, d->subs_by_topic, old_sub);
+      free_sub(d, old_sub);
     }
     
     mosquitto_plugin__subscribe(db, d->mosq_context, topic, subscribe_callback, mosq_sub);
+    driver_monitor_process(d->port, mosq_sub->pid, &(mosq_sub->monitor));
     HASH_ADD_KEYPTR(hh_topic, d->subs_by_topic, topic, strlen(topic), mosq_sub);
+    HASH_ADD(hh_monitor, d->subs_by_monitor, monitor, MONTIOR_SIZE, mosq_sub);
   }
   else
   {
     DEBUG("No Context");
-  }
-  if(topic != NULL)
-  {
-    driver_free(topic);
+    if(topic != NULL)
+    {
+      driver_free(topic);
+    }
   }
 
   encode_ok(x);
@@ -311,14 +319,16 @@ static int cmd_unsubscribe(char *buf, ErlDrvSizeT len, int* index, mosquitto_emb
   }
   DEBUG("topic %s", topic);
 
-  mosq_sub_t * old_sub = NULL;
+  mosq_sub_t * sub = NULL;
   // Remove any existing subscription for this topic
-  HASH_FIND(hh_topic, d->subs_by_topic, topic, strlen(topic), old_sub);
-  if(old_sub != NULL)
+  HASH_FIND(hh_topic, d->subs_by_topic, topic, strlen(topic), sub);
+  if(sub != NULL)
   {
     DEBUG("found %s", topic);
     mosquitto_plugin__unsubscribe(db, d->mosq_context, topic);
-    HASH_DELETE(hh_topic, d->subs_by_topic, old_sub);
+
+    driver_demonitor_process(d->port, &(sub->monitor));
+    free_sub(d, sub);
     encode_ok(x);
   }
   else
@@ -379,7 +389,7 @@ static int cmd_publish(char *buf, ErlDrvSizeT len, int* index, mosquitto_embed_d
   DEBUG("topic %s", topic);
 
   // Manually decode the payload binary to avoid an extra memcpy
-  const char *payload_ptr = buf + *index;
+  uint8_t *payload_ptr = buf + *index;
   ei_skip_term(buf, index);
   if (get8(payload_ptr) != ERL_BINARY_EXT)
   {
@@ -577,9 +587,29 @@ static void timeout(ErlDrvData drv_data)
   driver_set_timer(d->port, d->poll_period);
 }
 
-static void process_exit(ErlDrvData handle, ErlDrvMonitor *monitor)
+static void process_exit(ErlDrvData drv_data, ErlDrvMonitor *monitor)
 {
-  
+  mosquitto_embed_data *d = (mosquitto_embed_data*)drv_data;
+  mosq_sub_t * sub;
+
+  DEBUG("process_exit");
+
+  HASH_FIND(hh_monitor, d->subs_by_monitor, monitor, MONTIOR_SIZE, sub);
+  if (sub != NULL)
+  {
+    mosquitto_plugin__unsubscribe(db, d->mosq_context, sub->topic);
+    free_sub(d, sub);
+  }
+}
+
+static void free_sub(mosquitto_embed_data* d, mosq_sub_t * sub)
+{
+  DEBUG("free_sub - %s", sub->topic);
+
+  HASH_DELETE(hh_topic, d->subs_by_topic, sub);
+  HASH_DELETE(hh_monitor, d->subs_by_monitor, sub);
+  driver_free(sub->topic);
+  driver_free(sub);
 }
 
 /* Called on behalf of driver_select when
@@ -729,7 +759,7 @@ ErlDrvEntry mosquitto_embed_driver_entry = {
                                        set to this value */
     DRV_FLAGS,                      /* int driver_flags, see documentation */
     NULL,                           /* void *handle2, reserved for VM use */
-    NULL,                           /* F_PTR process_exit, called when a 
+    process_exit,                   /* F_PTR process_exit, called when a 
                                        monitored process dies */
     stop_select                     /* F_PTR stop_select, called to close an 
                                        event object */
