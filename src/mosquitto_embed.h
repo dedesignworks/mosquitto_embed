@@ -11,6 +11,7 @@ typedef void * mosq_user_context_t;
 // 	struct mosquitto *context, 
 // 	const char *topic, 
 // 	struct mosquitto_msg_store *store, 
+//  mosquitto_property *properties
 // 	void* plugin_context);
 typedef sub__on_send mosq_subscribe_callback;
 

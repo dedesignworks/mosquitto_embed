@@ -117,6 +117,7 @@ static int subscribe_callback(
   struct mosquitto *context, 
   const char *topic, 
   struct mosquitto_msg_store *msg_store, 
+  mosquitto_property *properties,
   mosq_user_context_t user_context)
 {
   mosq_sub_t * mosq_sub = (mosq_sub_t *)user_context;
