@@ -37,13 +37,13 @@ static ErlDrvBinary* ei_x_to_new_binary(ei_x_buff* x);
 //----------------------------------
 // Defines must be in sync with mosquitto_embed.ex
 //----------------------------------
-#define CMD_ECHO 0
-#define CMD_INIT 1
-#define CMD_POLL_PERIOD 2
-#define CMD_OPEN_CLIENT 3
-#define CMD_SUBSCRIBE 4
-#define CMD_UNSUBSCRIBE 5
-#define CMD_PUBLISH 6
+#define DRV_CMD_ECHO 0
+#define DRV_CMD_INIT 1
+#define DRV_CMD_POLL_PERIOD 2
+#define DRV_CMD_OPEN_CLIENT 3
+#define DRV_CMD_SUBSCRIBE 4
+#define DRV_CMD_UNSUBSCRIBE 5
+#define DRV_CMD_PUBLISH 6
 
 struct mosquitto_embed_data_s;
 typedef struct mosquitto_embed_data_s mosquitto_embed_data;
@@ -121,7 +121,7 @@ static int subscribe_callback(
 {
   mosq_sub_t * mosq_sub = (mosq_sub_t *)user_context;
   DEBUG("subscribe_callback");
-  DEBUG("%s %s %i", topic, (char*)UHPA_ACCESS_PAYLOAD(msg_store), *(int*)user_context);
+  DEBUG("%s %.*s %i", topic, msg_store->payloadlen, (char*)UHPA_ACCESS_PAYLOAD(msg_store), *(int*)user_context);
 
   void * payload = UHPA_ACCESS_PAYLOAD(msg_store);
   int payloadlen = msg_store->payloadlen;
@@ -343,11 +343,16 @@ static int cmd_publish(char *buf, ErlDrvSizeT len, int* index, mosquitto_embed_d
   ErlDrvTermData caller_pid;
   uint32_t message_expiry_interval = 0;
 
-  int qos = 0;
+  long qos = 0;
   int retain = 0;
   mosquitto_property *msg_properties = NULL;
 
   DEBUG("cmd_publish");
+
+  // Support the following tuples
+  //   {topic, payload, retain, qos}
+  //   {topic, payload, retain}
+  //   {topic, payload}
 
   if (ei_decode_tuple_header(buf, index, &term_size) < 0)
   {
@@ -385,7 +390,23 @@ static int cmd_publish(char *buf, ErlDrvSizeT len, int* index, mosquitto_embed_d
   uint32_t payloadlen = get32be(payload_ptr);
   // payload_ptr now points to the payload itself
 
-  mosquitto_property_add_string(&msg_properties, MQTT_PROP_CONTENT_TYPE, "application/json");
+  // retain
+  if ( (term_size > 2) && (ei_decode_boolean(buf, index, &retain) < 0))
+  {
+      DEBUG("Cannot decode retain");
+      encode_error(x);
+      goto exit_on_error;
+  }
+
+  // qos
+  if ( (term_size > 3) && (ei_decode_long(buf, index, &qos) < 0))
+  {
+      DEBUG("Cannot decode qos");
+      encode_error(x);
+      goto exit_on_error;
+  }
+
+  // mosquitto_property_add_string(&msg_properties, MQTT_PROP_CONTENT_TYPE, "application/json");
 
   if(d->mosq_context != NULL)
   {
@@ -441,26 +462,26 @@ static ErlDrvSSizeT call(ErlDrvData drv_data, unsigned int command, char *buf, E
   ei_x_new_with_version(&x);
   switch (command) 
   {
-    case CMD_ECHO: 
+    case DRV_CMD_ECHO: 
         if (rlen < len) {
             *rbuf = (void *)driver_alloc(len);
         }
         (void)memcpy(*rbuf, buf, len);
         return (ErlDrvSSizeT)(len);
         break;
-    case CMD_INIT:
+    case DRV_CMD_INIT:
         r = cmd_init(buf, len, &index, data, &x);
         break;
-    case CMD_OPEN_CLIENT:
+    case DRV_CMD_OPEN_CLIENT:
         r = cmd_open_client(buf, len, &index, data, &x);
         break;
-    case CMD_SUBSCRIBE:
+    case DRV_CMD_SUBSCRIBE:
         r = cmd_subscribe(buf, len, &index, data, &x);
         break;
-    case CMD_UNSUBSCRIBE:
+    case DRV_CMD_UNSUBSCRIBE:
         r = cmd_unsubscribe(buf, len, &index, data, &x);
         break;
-    case CMD_PUBLISH:
+    case DRV_CMD_PUBLISH:
         r = cmd_publish(buf, len, &index, data, &x);
         break;
     default:
