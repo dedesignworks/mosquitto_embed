@@ -73,6 +73,7 @@ static void free_sub(mosquitto_embed_data* d, mosq_sub_t * sub);
 
 struct mosquitto_embed_data_s {
   ErlDrvPort  port;
+  ErlDrvTermData mqtt_msg_atom;
   struct mosquitto_db *db;
   mosq_sock_t *listensock;
   int listensock_count;
@@ -95,6 +96,7 @@ static ErlDrvData start(ErlDrvPort port, char *buff)
   memset(d, 0, sizeof(mosquitto_embed_data));
 
   d->port = port;
+  d->mqtt_msg_atom = driver_mk_atom("mqtt_msg");
   set_port_control_flags(port, PORT_CONTROL_FLAG_BINARY);
 
   return (ErlDrvData)d;
@@ -128,10 +130,11 @@ static int subscribe_callback(
   int payloadlen = msg_store->payloadlen;
 
   ErlDrvTermData spec[] = {
+    ERL_DRV_ATOM, mosq_sub->d->mqtt_msg_atom,
     ERL_DRV_BUF2BINARY, TERM_DATA(topic), TERM_DATA(strlen(topic)),
     ERL_DRV_BUF2BINARY, TERM_DATA(payload), TERM_DATA(payloadlen),
     ERL_DRV_EXT2TERM, TERM_DATA(mosq_sub->user_data.buff), TERM_DATA(mosq_sub->user_data.index),
-    ERL_DRV_TUPLE, 3,
+    ERL_DRV_TUPLE, 4,
   };
 
   int spec_len = sizeof(spec)/sizeof(ErlDrvTermData);
