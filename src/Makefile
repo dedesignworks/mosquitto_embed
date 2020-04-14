@@ -210,7 +210,10 @@ reallyclean : clean
 sync_config:
 	cp -f src/config.mk src/mosquitto/config.mk
 
-mosquitto: sync_config
+src/mosquitto/.git:
+	git submodule update --init
+
+mosquitto: src/mosquitto/.git sync_config
 ifeq ($(UNAME),Darwin)
 	$(error Please compile using CMake on Mac OS X)
 endif
