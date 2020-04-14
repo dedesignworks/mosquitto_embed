@@ -35,8 +35,6 @@ static void args_to_argv(char * args,  int* argc, char*** argv);
 static void encode_ok(ei_x_buff* x);
 static void encode_error(ei_x_buff* x);
 
-static ErlDrvBinary* ei_x_to_new_binary(ei_x_buff* x);
-
 #include "mosquitto_embed.h"
 
 // The Monitor structure is actually 
@@ -112,15 +110,6 @@ static void stop(ErlDrvData handle)
   }
   mosquitto_deinit();
   driver_free((char*)handle);
-}
-
-static int cmd_echo(char *s, mosquitto_embed_data* data, ei_x_buff* x)
-{
-  // mosquitto_embed_data* d = (mosquitto_embed_data*)handle;
-  driver_output(data->port, s, strlen(s));
-  encode_ok(x);
-  // encode_error(x, conn);
-  return 0;
 }
 
 static int subscribe_callback(
@@ -354,9 +343,7 @@ exit_on_error:
 static int cmd_publish(char *buf, ErlDrvSizeT len, int* index, mosquitto_embed_data* d, ei_x_buff* x)
 {
   int term_size;
-  int term_type;
-  int user_data_index;
-  ErlDrvTermData caller_pid;
+  int term_type; 
   uint32_t message_expiry_interval = 0;
 
   long qos = 0;
@@ -394,7 +381,7 @@ static int cmd_publish(char *buf, ErlDrvSizeT len, int* index, mosquitto_embed_d
   DEBUG("topic %s", topic);
 
   // Manually decode the payload binary to avoid an extra memcpy
-  uint8_t *payload_ptr = buf + *index;
+  uint8_t *payload_ptr = (uint8_t *)buf + *index;
   ei_skip_term(buf, index);
   if (get8(payload_ptr) != ERL_BINARY_EXT)
   {
@@ -469,6 +456,7 @@ static ErlDrvSSizeT call(ErlDrvData drv_data, unsigned int command, char *buf, E
   if(ei_decode_version(buf, &index, &ver) < 0)
   {
     DEBUG("cannot decode version");
+    goto exit_on_error;
   }
   else
   {
@@ -503,13 +491,11 @@ static ErlDrvSSizeT call(ErlDrvData drv_data, unsigned int command, char *buf, E
     default:
         break;
   }
+  if(r == -1)
+  {
+    goto exit_on_error;
+  }
 
-    // if (rlen < len) {
-    //     *rbuf = (void *)driver_alloc(len);
-    // }
-    // (void)memcpy(*rbuf, buf, len);
-    // return (ErlDrvSSizeT)(len);
-exit_on_error:
   nlen = x.index;
 	if (nlen > rlen) {
 	    *rbuf =driver_alloc(nlen);
@@ -517,6 +503,9 @@ exit_on_error:
 	memcpy(*rbuf,x.buff,nlen);
 	ei_x_free(&x);
   return nlen;
+
+exit_on_error:
+  return -1;
 }
 
 // static ErlDrvSSizeT call(ErlDrvData drv_data, unsigned int command, char *buf, ErlDrvSizeT len, char **rbuf, ErlDrvSizeT rlen,
@@ -668,7 +657,7 @@ static void args_to_argv(char * args,  int* argc, char*** argv)
 
   DEBUG("args_to_argv %s", args);
 
-  if(args == NULL)
+  if(args == NULL || strlen(args) == 0)
   {
     *argc=1;
     char **v = (char**)driver_alloc(sizeof(char *));
@@ -731,14 +720,6 @@ static void encode_error(ei_x_buff* x)
 {
     const char* k_error = "error";
     ei_x_encode_atom(x, k_error);
-}
-
-static ErlDrvBinary* ei_x_to_new_binary(ei_x_buff* x)
-{
-  ErlDrvBinary* bin = driver_alloc_binary(x->index);
-  if (bin != NULL)
-	  memcpy(&bin->orig_bytes[0], x->buff, x->index);
-  return bin;
 }
 
 #define DRV_FLAGS (ERL_DRV_FLAG_USE_PORT_LOCKING | ERL_DRV_FLAG_SOFT_BUSY)
