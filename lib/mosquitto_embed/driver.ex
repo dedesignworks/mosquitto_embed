@@ -29,8 +29,8 @@ defmodule MosquittoEmbed.Driver do
         :erlang.port_call(@portname, @cmd_unsubscribe, topic)
     end
 
-    def publish(topic, payload, retain \\ false, qos \\ 0) do
-        :erlang.port_call(@portname, @cmd_publish, {topic, payload, retain, qos})
+    def publish(topic, payload, qos \\ 0, retain \\ false) do
+        :erlang.port_call(@portname, @cmd_publish, {topic, payload, qos,  retain})
     end
 
     def init([]) do

@@ -129,6 +129,7 @@ static int subscribe_callback(
   void * payload = UHPA_ACCESS_PAYLOAD(msg_store);
   int payloadlen = msg_store->payloadlen;
 
+  // {:mqtt_mesg, topic, payload, user_data}
   ErlDrvTermData spec[] = {
     ERL_DRV_ATOM, mosq_sub->d->mqtt_msg_atom,
     ERL_DRV_BUF2BINARY, TERM_DATA(topic), TERM_DATA(strlen(topic)),
@@ -396,18 +397,18 @@ static int cmd_publish(char *buf, ErlDrvSizeT len, int* index, mosquitto_embed_d
   uint32_t payloadlen = get32be(payload_ptr);
   // payload_ptr now points to the payload itself
 
-  // retain
-  if ( (term_size > 2) && (ei_decode_boolean(buf, index, &retain) < 0))
+  // qos
+  if ( (term_size > 2) && (ei_decode_long(buf, index, &qos) < 0))
   {
-      DEBUG("Cannot decode retain");
+      DEBUG("Cannot decode qos");
       encode_error(x);
       goto exit_on_error;
   }
 
-  // qos
-  if ( (term_size > 3) && (ei_decode_long(buf, index, &qos) < 0))
+  // retain
+  if ( (term_size > 3) && (ei_decode_boolean(buf, index, &retain) < 0))
   {
-      DEBUG("Cannot decode qos");
+      DEBUG("Cannot decode retain");
       encode_error(x);
       goto exit_on_error;
   }
