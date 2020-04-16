@@ -32,6 +32,9 @@ CFLAGS += -std=c99 -D_GNU_SOURCE -fPIC
 
 CPPFLAGS += -fPIC
 
+# Mosquitto handles the cross compile variables differently than Nerves
+undefine CROSS_COMPILE
+
 ###################
 # If you're having trouble, commenting in the following line
 # may give some more hints.  Be sure to rebuild everything by invoking
