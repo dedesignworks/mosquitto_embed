@@ -30,7 +30,7 @@ defmodule MosquittoEmbed.MixProject do
   defp deps do
     [
       {:elixir_make, "~> 0.6", runtime: false},
-      {:mosquitto, github: "dedesignworks/mosquitto", branch: "broker_lib", app: false}
+      {:mosquitto, github: "dedesignworks/mosquitto", branch: "broker_lib", app: false, compile: false}
     ]
   end
 
