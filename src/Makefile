@@ -21,7 +21,8 @@
 # MIX_APP_PATH  path to the build directory
 include src/config.mk
 
-MOSQUITTOD_SRC=src/mosquitto/src
+MOSQUITTO_DIR=$(MIX_DEPS_PATH)/mosquitto
+MOSQUITTOD_SRC=$(MOSQUITTO_DIR)/src
 DIRS=${MOSQUITTOD_SRC}
 
 PREFIX = $(MIX_APP_PATH)/priv
@@ -172,7 +173,7 @@ MOSQUITTOD_OBJS=	\
 HEADERS =$(wildcard src/*.h)
 OBJ=$(SRC:src/%.c=$(BUILD)/%.o)
 PORTLIB=$(PREFIX)/mosquitto_embed$(LIBEXT)
-MOSQ_INC=-I"$(CURDIR)/src/mosquitto/src" -I"$(CURDIR)/src/mosquitto" -I"$(CURDIR)/src/mosquitto/lib" -I"$(CURDIR)/src/mosquitto/src/deps"
+MOSQ_INC=-I"$(MOSQUITTO_DIR)/src" -I"$(MOSQUITTO_DIR)" -I"$(MOSQUITTO_DIR)/lib" -I"$(MOSQUITTO_DIR)/src/deps"
 all: install
 
 install: $(PREFIX) $(BUILD) mosquitto $(PORTLIB)
@@ -185,7 +186,7 @@ $(BUILD)/%.o: src/%.c
 $(BUILD)/mosquitto_embed.o: src/mosquitto_embed.c
 	$(CC) -c $(ERL_CFLAGS) $(CFLAGS) $(MOSQ_INC) -o $@ $<
 
-$(BUILD)/mosquitto_main.o : src/mosquitto_main.c src/mosquitto/src/mosquitto_broker_internal.h
+$(BUILD)/mosquitto_main.o : src/mosquitto_main.c $(MOSQUITTO_DIR)/src/mosquitto_broker_internal.h
 	${CC} $(BROKER_CPPFLAGS) $(BROKER_CFLAGS) $(MOSQ_INC) -c $< -o $@
 
 # ${CROSS_COMPILE}$(CC) -shared $(LIB_LDFLAGS) $^ -o $@ ${LIB_LIBADD}
@@ -211,12 +212,9 @@ reallyclean : clean
 	set -e; for d in ${DIRS}; do $(MAKE) -C $${d} reallyclean; done
 
 sync_config:
-	cp -f src/config.mk src/mosquitto/config.mk
+	cp -f src/config.mk $(MOSQUITTO_DIR)/config.mk
 
-src/mosquitto/.git:
-	git submodule update --init
-
-mosquitto: src/mosquitto/.git sync_config
+mosquitto: sync_config
 ifeq ($(UNAME),Darwin)
 	$(error Please compile using CMake on Mac OS X)
 endif

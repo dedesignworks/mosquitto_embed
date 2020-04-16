@@ -29,7 +29,8 @@ defmodule MosquittoEmbed.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:elixir_make, "~> 0.6", runtime: false}
+      {:elixir_make, "~> 0.6", runtime: false},
+      {:mosquitto, github: "dedesignworks/mosquitto", branch: "broker_lib", app: false}
     ]
   end
 
@@ -42,6 +43,10 @@ defmodule MosquittoEmbed.MixProject do
         :default
     end
   end
+
+  @windows_mingw_error_msg """
+  MosquittoEmbed currently does not support Windows
+  """
 
   defp make_error_message do
     case :os.type() do
