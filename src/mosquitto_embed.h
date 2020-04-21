@@ -6,14 +6,14 @@
 
 
 typedef void * mosq_user_context_t;
-// typedef void (*sub__on_send)(
+// typedef void (*FUNC_plugin_sub__on_send)(
 // 	struct mosquitto_db *db, 
 // 	struct mosquitto *context, 
 // 	const char *topic, 
 // 	struct mosquitto_msg_store *store, 
 //  mosquitto_property *properties
 // 	void* plugin_context);
-typedef sub__on_send mosq_subscribe_callback;
+typedef FUNC_plugin_sub__on_send mosq_subscribe_callback;
 
 // Embedded API
 struct mosquitto_db *mosquitto__get_db(void);

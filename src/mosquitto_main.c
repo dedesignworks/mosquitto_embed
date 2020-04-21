@@ -290,6 +290,7 @@ int mosquitto_init(int argc, char *argv[])
 
 	/* Initialise logging only after initialising the database in case we're
 	 * logging to topics */
+	//config->
 	if(log__init(&config)){
 		rc = 1;
 		return rc;
