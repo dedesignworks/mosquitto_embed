@@ -216,7 +216,7 @@ void mosquitto__daemonise(void)
 #endif
 }
 
-int mosquitto_init(int argc, char *argv[])
+int mosquitto_init(int argc, char *argv[], mosq_plugin_conf *plugin_conf)
 {
 	int i, j;
 	int rc;
@@ -264,6 +264,13 @@ int mosquitto_init(int argc, char *argv[])
 	if(rc != MOSQ_ERR_SUCCESS) return rc;
 	int_db.config = &config;
 
+	if(plugin_conf->on_log)
+	{
+		config.log_dest = config.log_dest | MQTT3_LOG_PLUGIN;
+		config.log_dest = config.log_dest & ~MQTT3_LOG_STDERR;
+		config.plugin_log = plugin_conf->on_log;
+		config.plugin_context = plugin_conf->plugin_context;
+	}
 #ifndef WITH_BROKER_LIB
 	if(config.daemon){
 		mosquitto__daemonise();
@@ -468,7 +475,7 @@ int mosquitto_deinit()
 	return rc;
 }
 
-void mosquitto__readsock(struct mosquitto_db *db, mosq_sock_t ready_sock, mosquitto__on_accept_cb on_accept, void* caller_context)
+void mosquitto__readsock(struct mosquitto_db *db, mosq_sock_t ready_sock, FUNC_plugin_on_accept on_accept, void* caller_context)
 {
 	struct mosquitto *context = NULL;
 	int rc;
@@ -631,11 +638,11 @@ void mosquitto__closesock(struct mosquitto_db *db, int ready_sock)
 	}
 }
 
-void mosquitto__on_write_block(struct mosquitto * mosq_context, mosquitto__on_write_block_cb on_write_block_cb, void* caller_context)
+void mosquitto__on_write_block(struct mosquitto * mosq_context, FUNC_plugin_on_accept on_write_block_cb, void* caller_context)
 {
 	struct mosquitto *context = mosq_context;
 	context->on_write_block = on_write_block_cb;
-	context->write_block_userdata = caller_context;
+	context->plugin_context = caller_context;
 }
 
 
@@ -658,16 +665,16 @@ int mosquitto_plugin__subscribe(
 	struct mosquitto_db *db, 
 	struct mosquitto * mosq_context, 
 	char *sub, 
-	mosq_subscribe_callback subscribe_callback, 
-	mosq_user_context_t user_context)
+	FUNC_broker_plugin_sub_on_send subscribe_callback, 
+	mosq_plugin_context_t user_context)
 {
 	int rc = 0;
 	uint8_t subscription_options = MQTT_SUB_OPT_SEND_RETAIN_ALWAYS;
 	uint32_t subscription_identifier = 0;
-	uint8_t qos;
+	uint8_t qos = 0;
 
 	rc = sub__add_plugin(db, mosq_context, sub, qos, subscription_identifier, subscription_options, &db->subs, subscribe_callback, user_context);
-	int rc2 = sub__retain_queue_plugin(db, mosq_context, sub, qos, subscription_identifier, subscribe_callback, user_context);
+	sub__retain_queue_plugin(db, mosq_context, sub, qos, subscription_identifier, subscribe_callback, user_context);
 
 	return rc;
 }

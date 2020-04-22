@@ -31,6 +31,7 @@
 
 static int get_string(char *buf, ErlDrvSizeT len, int* index, char** s, ei_x_buff* x);
 static void args_to_argv(char * args,  int* argc, char*** argv);
+static void plugin_log(void* plugin_context, int priority, const char *message, int length);
 
 static void encode_ok(ei_x_buff* x);
 static void encode_error(ei_x_buff* x);
@@ -73,12 +74,15 @@ static void free_sub(mosquitto_embed_data* d, mosq_sub_t * sub);
 
 struct mosquitto_embed_data_s {
   ErlDrvPort  port;
+  ErlDrvTermData port_term;
   ErlDrvTermData mqtt_msg_atom;
+  ErlDrvTermData mqtt_log_atom;
   struct mosquitto_db *db;
   mosq_sock_t *listensock;
   int listensock_count;
   int poll_period;
   struct mosquitto * mosq_context;
+  mosq_plugin_conf plugin_conf;
 
   mosq_sub_t * subs_by_topic;
   mosq_sub_t * subs_by_monitor;
@@ -96,7 +100,13 @@ static ErlDrvData start(ErlDrvPort port, char *buff)
   memset(d, 0, sizeof(mosquitto_embed_data));
 
   d->port = port;
+  d->port_term = driver_mk_port(port);
   d->mqtt_msg_atom = driver_mk_atom("mqtt_msg");
+  d->mqtt_log_atom = driver_mk_atom("mqtt_log");
+
+  d->plugin_conf.on_log = plugin_log;
+  d->plugin_conf.plugin_context = d;
+
   set_port_control_flags(port, PORT_CONTROL_FLAG_BINARY);
 
   return (ErlDrvData)d;
@@ -120,7 +130,7 @@ static int subscribe_callback(
   const char *topic, 
   struct mosquitto_msg_store *msg_store, 
   mosquitto_property *properties,
-  mosq_user_context_t user_context)
+  mosq_plugin_context_t user_context)
 {
   mosq_sub_t * mosq_sub = (mosq_sub_t *)user_context;
   DEBUG("subscribe_callback");
@@ -155,6 +165,7 @@ static int cmd_init(char *buf, ErlDrvSizeT len, int* index, mosquitto_embed_data
   char **argv;
   char * args;
 
+
   DEBUG("init");
 
   if(get_string(buf, len, index, &args, x) < 0)
@@ -165,7 +176,7 @@ static int cmd_init(char *buf, ErlDrvSizeT len, int* index, mosquitto_embed_data
 
   args_to_argv(args, &argc, &argv);
   
-  mosquitto_init(argc, argv);
+  mosquitto_init(argc, argv, &(d->plugin_conf));
   driver_free(args);
   db = mosquitto__get_db();
   mosquitto__get_listensock(&(d->listensock), &(d->listensock_count));
@@ -535,7 +546,7 @@ static void handle_erl_msg(ErlDrvData handle, char *buff,
 	// 		       int len);
   // driver_output(d->port, "yes", 3);
 }
-static void on_write_block(struct mosquitto * mosq_context, mosq_sock_t sock, mosq_user_context_t context)
+static void on_write_block(struct mosquitto * mosq_context, mosq_sock_t sock, mosq_plugin_context_t context)
 {
   mosquitto_embed_data *d = (mosquitto_embed_data*)context;
   DEBUG("on_write_block");
@@ -724,6 +735,22 @@ static void encode_error(ei_x_buff* x)
 {
     const char* k_error = "error";
     ei_x_encode_atom(x, k_error);
+}
+
+static void plugin_log(void* plugin_context, int priority, const char *message, int length)
+{
+  mosquitto_embed_data *d = (mosquitto_embed_data*)plugin_context;
+ 
+  ErlDrvTermData spec[] = {
+    ERL_DRV_ATOM, d->mqtt_log_atom,
+    ERL_DRV_INT, TERM_DATA(priority),
+    ERL_DRV_BUF2BINARY, TERM_DATA(message), TERM_DATA(length),
+    ERL_DRV_TUPLE, 3,
+  };
+
+  int spec_len = sizeof(spec)/sizeof(ErlDrvTermData);
+
+  erl_drv_output_term( d->port_term, spec, spec_len);
 }
 
 #define DRV_FLAGS (ERL_DRV_FLAG_USE_PORT_LOCKING | ERL_DRV_FLAG_SOFT_BUSY)

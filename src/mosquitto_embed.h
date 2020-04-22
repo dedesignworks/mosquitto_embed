@@ -5,33 +5,32 @@
 #include "mqtt_protocol.h"
 
 
-typedef void * mosq_user_context_t;
-// typedef void (*FUNC_plugin_sub__on_send)(
-// 	struct mosquitto_db *db, 
-// 	struct mosquitto *context, 
-// 	const char *topic, 
-// 	struct mosquitto_msg_store *store, 
-//  mosquitto_property *properties
-// 	void* plugin_context);
-typedef FUNC_plugin_sub__on_send mosq_subscribe_callback;
+typedef void * mosq_plugin_context_t;
+typedef void (*FUNC_plugin_on_accept)(struct mosquitto * mosq_context, mosq_sock_t sock, mosq_plugin_context_t plugin_context);
+typedef void (*FUNC_plugin_on_write_block)(struct mosquitto * mosq_context, mosq_sock_t sock, mosq_plugin_context_t plugin_context);
+
+typedef struct mosquitto_plugin_conf_s{
+	void* plugin_context;
+	FUNC_broker_plugin_log	on_log;
+} mosq_plugin_conf;
+
 
 // Embedded API
 struct mosquitto_db *mosquitto__get_db(void);
 void mosquitto__get_listensock(mosq_sock_t **lsock,int *lsock_count);
-int mosquitto_init(int argc, char *argv[]);
+int mosquitto_init(int argc, char *argv[], mosq_plugin_conf *plugin_conf);
 int mosquitto_deinit();
 
-typedef void (*mosquitto__on_accept_cb)(struct mosquitto * mosq_context, mosq_sock_t sock, mosq_user_context_t user_context);
-typedef void (*mosquitto__on_write_block_cb)(struct mosquitto * mosq_context, mosq_sock_t sock, mosq_user_context_t user_context);
-void mosquitto__readsock(struct mosquitto_db *db, mosq_sock_t ready_sock, mosquitto__on_accept_cb on_accept, mosq_user_context_t user_context);
+
+void mosquitto__readsock(struct mosquitto_db *db, mosq_sock_t ready_sock, FUNC_plugin_on_accept on_accept, mosq_plugin_context_t plugin_context);
 void mosquitto__writesock(struct mosquitto_db *db, mosq_sock_t ready_sock);
 void mosquitto__closesock(struct mosquitto_db *db, mosq_sock_t ready_sock);
-void mosquitto__on_write_block(struct mosquitto * mosq_context, mosquitto__on_write_block_cb on_write_block_cb, mosq_user_context_t user_context);
+void mosquitto__on_write_block(struct mosquitto * mosq_context, FUNC_plugin_on_write_block on_write_block_cb, mosq_plugin_context_t plugin_context);
 void mosquitto__loop_step(struct mosquitto_db *db);
 
 // Plugin API
 struct mosquitto * mosquitto_plugin__create_context(struct mosquitto_db *db, char* client_id);
-int mosquitto_plugin__subscribe(struct mosquitto_db *db, struct mosquitto * mosq_context, char *sub, mosq_subscribe_callback subscribe_callback, mosq_user_context_t user_context);
+int mosquitto_plugin__subscribe(struct mosquitto_db *db, struct mosquitto * mosq_context, char *sub, FUNC_broker_plugin_sub_on_send subscribe_callback, mosq_plugin_context_t plugin_context);
 int mosquitto_plugin__unsubscribe(struct mosquitto_db *db, struct mosquitto * mosq_context, char *sub);
 int mosquitto_plugin__publish(
 	struct mosquitto_db *db, 

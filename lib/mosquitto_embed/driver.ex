@@ -85,6 +85,11 @@ defmodule MosquittoEmbed.Driver do
         {:noreply, state}
     end
 
+    def handle_info({:mqtt_log, priority, message}, state) do
+        Logger.info( "#{priority}: " <> message)
+        {:noreply, state}
+    end
+
     # def handle_info({port,{:data,data}}, state = %{port: port, waiters: [waiter | waiters]}) do
     #     Logger.debug("Data: #{inspect(data)}")
     #     GenServer.reply(waiter, data)
