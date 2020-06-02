@@ -22,6 +22,7 @@
 include src/config.mk
 
 MOSQUITTO_DIR=$(MIX_DEPS_PATH)/mosquitto
+#MOSQUITTO_DIR=$(CURDIR)/../mosquitto
 MOSQUITTOD_SRC=$(MOSQUITTO_DIR)/src
 DIRS=${MOSQUITTOD_SRC}
 
@@ -181,13 +182,13 @@ install: $(PREFIX) $(BUILD) mosquitto $(PORTLIB)
 $(OBJ): $(HEADERS) src/Makefile
 
 $(BUILD)/%.o: src/%.c
-	$(CC) -c $(ERL_CFLAGS) $(CFLAGS) -o $@ $<
+	$(CC) -c $(ERL_CFLAGS) $(CFLAGS) $(BROKER_CPPFLAGS) $(BROKER_CFLAGS) -o $@ $<
 
 $(BUILD)/mosquitto_embed.o: src/mosquitto_embed.c
-	$(CC) -c $(ERL_CFLAGS) $(CFLAGS) $(MOSQ_INC) -o $@ $<
+	$(CC) -c $(ERL_CFLAGS) $(CFLAGS) $(MOSQ_INC) $(BROKER_CPPFLAGS) $(BROKER_CFLAGS) -o $@ $<
 
 $(BUILD)/mosquitto_main.o : src/mosquitto_main.c $(MOSQUITTO_DIR)/src/mosquitto_broker_internal.h
-	${CC} $(BROKER_CPPFLAGS) $(BROKER_CFLAGS) $(MOSQ_INC) -c $< -o $@
+	${CC} $(BROKER_CPPFLAGS) $(BROKER_CFLAGS) $(MOSQ_INC) $(BROKER_CPPFLAGS) $(BROKER_CFLAGS) -c $< -o $@
 
 # ${CROSS_COMPILE}$(CC) -shared $(LIB_LDFLAGS) $^ -o $@ ${LIB_LIBADD}
 $(PORTLIB): $(OBJ) $(MOSQUITTOD_OBJS)

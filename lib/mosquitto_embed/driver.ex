@@ -49,7 +49,7 @@ defmodule MosquittoEmbed.Driver do
         port_path = :code.priv_dir(:mosquitto_embed)
         case :erl_ddll.load_driver(port_path, @portname) do
             :ok -> :ok;
-            {:error, :already_loaded} -> :ok;
+            {:error, :already_loaded} -> :ok
             {:error, error_desc} -> 
                 Logger.error("Cannot Load #{port_path} #{@portname} #{:erl_ddll.format_error(error_desc)}")
         end

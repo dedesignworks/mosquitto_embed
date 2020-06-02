@@ -1,13 +1,9 @@
 #ifndef MOSQUITTO_EMBED_H
 #define MOSQUITTO_EMBED_H
 
+#include "mosquitto_internal.h"
 #include "mosquitto_broker_internal.h"
 #include "mqtt_protocol.h"
-
-
-typedef void * mosq_plugin_context_t;
-typedef void (*FUNC_plugin_on_accept)(struct mosquitto * mosq_context, mosq_sock_t sock, mosq_plugin_context_t plugin_context);
-typedef void (*FUNC_plugin_on_write_block)(struct mosquitto * mosq_context, mosq_sock_t sock, mosq_plugin_context_t plugin_context);
 
 typedef struct mosquitto_plugin_conf_s{
 	void* plugin_context;
@@ -26,6 +22,7 @@ void mosquitto__readsock(struct mosquitto_db *db, mosq_sock_t ready_sock, FUNC_p
 void mosquitto__writesock(struct mosquitto_db *db, mosq_sock_t ready_sock);
 void mosquitto__closesock(struct mosquitto_db *db, mosq_sock_t ready_sock);
 void mosquitto__on_write_block(struct mosquitto * mosq_context, FUNC_plugin_on_write_block on_write_block_cb, mosq_plugin_context_t plugin_context);
+void mosquitto__on_close(struct mosquitto * mosq_context, FUNC_plugin_on_close on_close_cb, void* caller_context);
 void mosquitto__loop_step(struct mosquitto_db *db);
 
 // Plugin API

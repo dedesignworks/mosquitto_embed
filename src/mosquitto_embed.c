@@ -133,8 +133,8 @@ static int subscribe_callback(
   mosq_plugin_context_t user_context)
 {
   mosq_sub_t * mosq_sub = (mosq_sub_t *)user_context;
-  DEBUG("subscribe_callback");
-  DEBUG("%s %.*s %i", topic, msg_store->payloadlen, (char*)UHPA_ACCESS_PAYLOAD(msg_store), *(int*)user_context);
+  // DEBUG("subscribe_callback");
+  // DEBUG("%s %.*s %i", topic, msg_store->payloadlen, (char*)UHPA_ACCESS_PAYLOAD(msg_store), *(int*)user_context);
 
   void * payload = UHPA_ACCESS_PAYLOAD(msg_store);
   int payloadlen = msg_store->payloadlen;
@@ -190,7 +190,7 @@ static int cmd_init(char *buf, ErlDrvSizeT len, int* index, mosquitto_embed_data
 
   db->start_time = mosquitto_time();
 #ifdef WITH_PERSISTENCE
-  int_db->last_backup = mosquitto_time();
+  db->last_backup = mosquitto_time();
 #endif
   d->poll_period = DEFAULT_POLL_PERIOD;
   driver_set_timer(d->port, d->poll_period);
@@ -365,7 +365,7 @@ static int cmd_publish(char *buf, ErlDrvSizeT len, int* index, mosquitto_embed_d
   int retain = 0;
   mosquitto_property *msg_properties = NULL;
 
-  DEBUG("cmd_publish");
+  // DEBUG("cmd_publish");
 
   // Support the following tuples
   //   {topic, payload, retain, qos}
@@ -393,7 +393,7 @@ static int cmd_publish(char *buf, ErlDrvSizeT len, int* index, mosquitto_embed_d
       encode_error(x);
       goto exit_on_error;
   }
-  DEBUG("topic %s", topic);
+  // DEBUG("topic %s", topic);
 
   // Manually decode the payload binary to avoid an extra memcpy
   uint8_t *payload_ptr = (uint8_t *)buf + *index;
@@ -473,10 +473,6 @@ static ErlDrvSSizeT call(ErlDrvData drv_data, unsigned int command, char *buf, E
     DEBUG("cannot decode version");
     goto exit_on_error;
   }
-  else
-  {
-    DEBUG("Version %i", ver);
-  }
 
   ei_x_new_with_version(&x);
   switch (command) 
@@ -553,23 +549,34 @@ static void on_write_block(struct mosquitto * mosq_context, mosq_sock_t sock, mo
   driver_select(d->port, sock2event(sock), ERL_DRV_WRITE, 1);
 }
 
+static void on_close(struct mosquitto * mosq_context, mosq_sock_t sock, mosq_plugin_context_t context)
+{
+  mosquitto_embed_data *d = (mosquitto_embed_data*)context;
+  DEBUG("on_close %i", sock);
+
+  driver_select(d->port, sock2event(sock), ERL_DRV_READ, 0);
+  driver_select(d->port, sock2event(sock), ERL_DRV_WRITE, 0);
+}
+
 static void on_socket_accept(struct mosquitto * mosq_context, mosq_sock_t sock, void* context)
 {
   mosquitto_embed_data *d = (mosquitto_embed_data*)context;
-  DEBUG("on_socket_accept");
+  DEBUG("on_socket_accept %i", sock);
 
   mosquitto__on_write_block(mosq_context, on_write_block, d);
+  mosquitto__on_close(mosq_context, on_close, d);
 
   driver_select(d->port, sock2event(sock), ERL_DRV_READ, 1);
   driver_select(d->port, sock2event(sock), ERL_DRV_WRITE, 1);
+
 }
 
 static void handle_socket_input(ErlDrvData handle, ErlDrvEvent event)
 {
   mosquitto_embed_data *d = (mosquitto_embed_data*)handle;
-  // DEBUG("handle_socket_input");
+  DEBUG("handle_socket_input %i", event2sock(event));
 
-  mosquitto__readsock(d->db,event2sock(event), on_socket_accept, d);
+  mosquitto__readsock(d->db, event2sock(event), on_socket_accept, d);
   
   mosquitto__loop_step(db);
 
@@ -580,7 +587,7 @@ static void handle_socket_input(ErlDrvData handle, ErlDrvEvent event)
 static void handle_socket_output(ErlDrvData handle, ErlDrvEvent event)
 {
   mosquitto_embed_data *d = (mosquitto_embed_data*)handle;
-  // DEBUG("handle_socket_output");
+  DEBUG("handle_socket_output");
 
   // Disable socket notfications here as mosquitto__writesock() might need to enable them
   driver_select(d->port, sock2event(event), ERL_DRV_WRITE, 0);
@@ -626,7 +633,9 @@ static void free_sub(mosquitto_embed_data* d, mosq_sub_t * sub)
   unix driver would call close(event) */
 static void stop_select(ErlDrvEvent event, void* reserved)
 {
-    mosquitto__closesock(db, event2sock(event));
+  DEBUG("stop_select - %i", event2sock(event));
+  
+  mosquitto__closesock(db, event2sock(event));
 }
 
 static int get_string(char *buf, ErlDrvSizeT len, int* index, char** s, ei_x_buff* x)

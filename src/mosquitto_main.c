@@ -645,6 +645,14 @@ void mosquitto__on_write_block(struct mosquitto * mosq_context, FUNC_plugin_on_a
 	context->plugin_context = caller_context;
 }
 
+void mosquitto__on_close(struct mosquitto * mosq_context, FUNC_plugin_on_close on_close_cb, void* caller_context)
+{
+	struct mosquitto *context = mosq_context;
+	context->on_close = on_close_cb;
+	context->plugin_context = caller_context;
+}
+
+#pragma warning "MKS!! Test1"
 
 struct mosquitto * mosquitto_plugin__create_context(struct mosquitto_db *db, char* client_id)
 {
